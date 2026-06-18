@@ -138,4 +138,43 @@ void main() {
     expect(back['item'], 'doc');
     expect(back['n'], 7);
   });
+
+  test('setRole promotes a member to co-owner without rotating the key', () {
+    final owner = generateIdentity(sodium);
+    var g = GroupService.createGroup(
+        sodium: sodium, name: 'G', identity: owner, signingKeyDomain: signingDomain);
+    final originalKey = Uint8List.fromList(g.groupKey);
+    g = GroupService.addMember(
+        g, const GroupMember(uid: 'co', publicKeyB64: 'cHVi'));
+    g = GroupService.setRole(g, 'co', GroupRole.coOwner);
+    expect(g.memberByUid('co')!.role, GroupRole.coOwner);
+    expect(g.canAccessHidden('co'), isTrue);
+    // Promotion is not a key event — a co-owner already held the group key.
+    expect(g.groupKey, equals(originalKey));
+    // Unknown uid is a no-op: returns the group unchanged.
+    expect(identical(GroupService.setRole(g, 'ghost', GroupRole.coOwner), g),
+        isTrue);
+  });
+
+  test('sealKeyForMember → unsealKey round-trips only for the named member', () {
+    final recipient = generateIdentity(sodium);
+    final stranger = generateIdentity(sodium);
+    final member = GroupMember(
+        uid: recipient.uid,
+        publicKeyB64: base64.encode(recipient.keyPair.publicKey));
+    final rawKey =
+        Uint8List.fromList(List<int>.generate(32, (i) => (i * 5 + 1) % 256));
+
+    final sealed = GroupService.sealKeyForMember(
+        sodium: sodium, member: member, keyBytes: rawKey);
+
+    final opened = GroupService.unsealKey(
+        sodium: sodium, sealed: sealed, myKeyPair: recipient.keyPair);
+    expect(opened, equals(rawKey));
+
+    // A non-recipient cannot open it.
+    final denied = GroupService.unsealKey(
+        sodium: sodium, sealed: sealed, myKeyPair: stranger.keyPair);
+    expect(denied, isNull);
+  });
 }

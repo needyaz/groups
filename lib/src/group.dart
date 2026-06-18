@@ -1,6 +1,33 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+/// A member's standing role within a group. String-backed (like other wire
+/// enums) so an older client that doesn't know a future role reads it as the
+/// safe default rather than crashing.
+///
+/// [member] is the implicit default for every roster — it is the only role
+/// Mylo's groups ever have, and it is the value an absent `role` key
+/// deserializes to. The richer owner/co-owner distinction is Vault policy:
+/// owners and co-owners have full content access (they receive every item's
+/// keys, including hidden ones); plain members have no standing content access.
+///
+/// Note: ownership truth lives in [Group.ownerUid] (and the charter tip), NOT
+/// in this field. [owner] exists only so a UI can render the roster uniformly;
+/// never read ownership from a member's role.
+enum GroupRole { member, coOwner, owner }
+
+GroupRole _roleFromName(String? name) {
+  switch (name) {
+    case 'coOwner':
+      return GroupRole.coOwner;
+    case 'owner':
+      return GroupRole.owner;
+    default:
+      // null (Mylo / legacy manifests) and any unknown future value → member.
+      return GroupRole.member;
+  }
+}
+
 class GroupMember {
   final String uid;
   final String publicKeyB64;
@@ -29,6 +56,12 @@ class GroupMember {
   /// published. Mutually exclusive with [avatarPhotoPath] / [avatarEmoji].
   final bool avatarPlain;
 
+  /// The member's standing role in the group. Defaults to [GroupRole.member]
+  /// (the only role Mylo uses). Published in the manifest only when non-default,
+  /// so role-less rosters serialize byte-for-byte as before (see
+  /// [toManifestJson]).
+  final GroupRole role;
+
   const GroupMember({
     required this.uid,
     required this.publicKeyB64,
@@ -38,9 +71,14 @@ class GroupMember {
     this.avatarEmoji,
     this.avatarPhotoPath,
     this.avatarPlain = false,
+    this.role = GroupRole.member,
   });
 
   Uint8List get publicKey => Uint8List.fromList(base64.decode(publicKeyB64));
+
+  /// True when this member is a co-owner (full content access, equal to owner,
+  /// but not the billing party and cannot transfer ownership).
+  bool get isCoOwner => role == GroupRole.coOwner;
 
   /// The local-view avatar photo path for this member: a local override photo
   /// wins, else the member's received published photo ([receivedPath]). Returns
@@ -60,11 +98,17 @@ class GroupMember {
   }
 
   /// For the encrypted manifest sent to the server and other members.
+  ///
+  /// `role` is emitted ONLY when non-default. This is a load-bearing
+  /// backward-compat rule: a pure-member roster (every Mylo manifest and every
+  /// pre-roles Vault manifest) serializes exactly as before, so adopters and
+  /// any canonical-JSON consumers see no wire change.
   Map<String, dynamic> toManifestJson() => {
         'uid': uid,
         'publicKeyB64': publicKeyB64,
         if (edPubKeyB64 != null) 'edPubKeyB64': edPubKeyB64,
         if (displayName != null) 'displayName': displayName,
+        if (role != GroupRole.member) 'role': role.name,
       };
 
   /// For local on-device storage — includes local-only fields.
@@ -85,6 +129,7 @@ class GroupMember {
         avatarEmoji: j['avatarEmoji'] as String?,
         avatarPhotoPath: j['avatarPhotoPath'] as String?,
         avatarPlain: j['avatarPlain'] as bool? ?? false,
+        role: _roleFromName(j['role'] as String?),
       );
 
   GroupMember copyWith({
@@ -94,6 +139,7 @@ class GroupMember {
     String? avatarEmoji,
     String? avatarPhotoPath,
     bool? avatarPlain,
+    GroupRole? role,
   }) =>
       GroupMember(
         uid: uid,
@@ -104,6 +150,7 @@ class GroupMember {
         avatarEmoji: avatarEmoji ?? this.avatarEmoji,
         avatarPhotoPath: avatarPhotoPath ?? this.avatarPhotoPath,
         avatarPlain: avatarPlain ?? this.avatarPlain,
+        role: role ?? this.role,
       );
 }
 
@@ -165,6 +212,24 @@ class Group {
     }
     return null;
   }
+
+  /// The billing/charter owner. Authoritative via [ownerUid] — never inferred
+  /// from a member's [GroupRole].
+  bool isOwner(String uid) => uid == ownerUid;
+
+  /// A co-owner: full content access equal to the owner, but not the billing
+  /// party. Derived from the member's role.
+  bool isCoOwner(String uid) => memberByUid(uid)?.role == GroupRole.coOwner;
+
+  /// The set allowed to see hidden items and hold every item's keys: the owner
+  /// plus all co-owners. This is the policy boundary the vault wraps item keys
+  /// against for hidden/requestable content.
+  bool canAccessHidden(String uid) => isOwner(uid) || isCoOwner(uid);
+
+  /// The members who get full content access (owner + co-owners), as the
+  /// recipient set for hidden item keys and co-owner escrow.
+  List<GroupMember> get fullAccessMembers =>
+      members.where((m) => isOwner(m.uid) || m.isCoOwner).toList();
 
   /// For the server: excludes local-only fields; uses toManifestJson for members.
   Map<String, dynamic> toManifestJson() => {

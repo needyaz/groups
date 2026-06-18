@@ -110,4 +110,82 @@ void main() {
     final firstMember = (manifest['members'] as List).first as Map;
     expect(firstMember.containsKey('localDisplayName'), isFalse);
   });
+
+  // ---- Roles ---------------------------------------------------------------
+
+  test('role defaults to member and is omitted from a role-less manifest', () {
+    const m = GroupMember(uid: 'u1', publicKeyB64: 'cHVi', displayName: 'A');
+    expect(m.role, GroupRole.member);
+    expect(m.isCoOwner, isFalse);
+    // Load-bearing compat: a plain member's manifest carries NO role key, so it
+    // is byte-identical to the pre-roles wire format.
+    expect(m.toManifestJson().containsKey('role'), isFalse);
+  });
+
+  test('non-default role is published and round-trips', () {
+    const m = GroupMember(
+      uid: 'u1',
+      publicKeyB64: 'cHVi',
+      role: GroupRole.coOwner,
+    );
+    final manifest = m.toManifestJson();
+    expect(manifest['role'], 'coOwner');
+    final rt = GroupMember.fromJson(manifest);
+    expect(rt.role, GroupRole.coOwner);
+    expect(rt.isCoOwner, isTrue);
+  });
+
+  test('legacy / unknown role names deserialize to member (never throw)', () {
+    // A role-less Mylo manifest.
+    final legacy =
+        GroupMember.fromJson(const {'uid': 'u', 'publicKeyB64': 'x'});
+    expect(legacy.role, GroupRole.member);
+    // An unknown future role from a newer client.
+    final future = GroupMember.fromJson(
+        const {'uid': 'u', 'publicKeyB64': 'x', 'role': 'superOwner'});
+    expect(future.role, GroupRole.member);
+  });
+
+  test('golden: a pure-member group manifest is unchanged by the roles field',
+      () {
+    final g = Group(
+      groupId: 'g1',
+      name: 'Fam',
+      ownerUid: 'u1',
+      members: const [
+        GroupMember(uid: 'u1', publicKeyB64: 'cHVi', displayName: 'Mom'),
+        GroupMember(uid: 'u2', publicKeyB64: 'cHVj', displayName: 'Dad'),
+      ],
+      groupKey: Uint8List(32),
+      createdAt: 7,
+    );
+    // The exact bytes a pre-roles client would have produced. If the roles
+    // change ever leaks a `role` key into a member here, this breaks.
+    const expected = '{"groupId":"g1","name":"Fam","ownerUid":"u1","members":'
+        '[{"uid":"u1","publicKeyB64":"cHVi","displayName":"Mom"},'
+        '{"uid":"u2","publicKeyB64":"cHVj","displayName":"Dad"}],'
+        '"groupKey":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",'
+        '"createdAt":7}';
+    expect(jsonEncode(g.toManifestJson()), expected);
+  });
+
+  test('Group role helpers: owner via ownerUid, co-owner via role', () {
+    final g = Group(
+      groupId: 'g1',
+      name: 'Fam',
+      ownerUid: 'owner',
+      members: const [
+        GroupMember(uid: 'owner', publicKeyB64: 'a'),
+        GroupMember(uid: 'co', publicKeyB64: 'b', role: GroupRole.coOwner),
+        GroupMember(uid: 'mem', publicKeyB64: 'c'),
+      ],
+      groupKey: Uint8List(32),
+      createdAt: 1,
+    );
+    expect(g.isOwner('owner'), isTrue);
+    expect(g.canAccessHidden('owner'), isTrue);
+    expect(g.canAccessHidden('co'), isTrue);
+    expect(g.canAccessHidden('mem'), isFalse);
+    expect(g.fullAccessMembers.map((m) => m.uid), ['owner', 'co']);
+  });
 }

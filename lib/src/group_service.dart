@@ -118,6 +118,24 @@ class GroupService {
         members: updated, groupKey: Uint8List.fromList(newKey));
   }
 
+  /// Set [memberUid]'s [role] (e.g. promote a member to co-owner, or demote a
+  /// co-owner back to member). Pure and additive — no key rotation, because a
+  /// co-owner is already a full group-key holder.
+  ///
+  /// This does NOT change ownership: the billing owner remains [Group.ownerUid]
+  /// and the charter tip. Returns the group unchanged if [memberUid] is absent.
+  ///
+  /// Demotion that requires forward secrecy on hidden material is a
+  /// remove-then-re-add (which rotates the group key via [removeMember]), not a
+  /// [setRole] call.
+  static Group setRole(Group group, String memberUid, GroupRole role) {
+    if (group.memberByUid(memberUid) == null) return group;
+    final updated = group.members
+        .map((m) => m.uid == memberUid ? m.copyWith(role: role) : m)
+        .toList();
+    return group.copyWith(members: updated);
+  }
+
   /// Pure ownership-uid change (no charter). Used for the uid mechanics and by
   /// [transferOwnershipWithCharter] as its fallback.
   static Group transferOwnership(Group group, String newOwnerUid) {
@@ -207,6 +225,33 @@ class GroupService {
     } finally {
       box.dispose();
     }
+  }
+
+  /// Seal an opaque [keyBytes] (e.g. a per-item content key) to [member]'s box
+  /// public key with an anonymous sealed-box. Only the holder of [member]'s
+  /// secret key can open it (via [unsealKey]); the sender is not authenticated.
+  ///
+  /// This is a generic, key-agnostic substrate primitive: it knows nothing
+  /// about what the bytes mean or where the ciphertext is stored. The app
+  /// (e.g. the vault's per-item key scheme) decides those.
+  static String sealKeyForMember({
+    required Sodium sodium,
+    required GroupMember member,
+    required Uint8List keyBytes,
+  }) =>
+      sealString(sodium, base64.encode(keyBytes), member.publicKey);
+
+  /// Open a blob produced by [sealKeyForMember] with [myKeyPair]. Returns the
+  /// raw key bytes, or null if this keypair is not the sealed recipient.
+  static Uint8List? unsealKey({
+    required Sodium sodium,
+    required String sealed,
+    required KeyPair myKeyPair,
+  }) {
+    final opened = openSealedBytes(sodium, sealed, myKeyPair);
+    if (opened == null) return null;
+    // sealKeyForMember sealed the base64 text of the key; decode it back.
+    return Uint8List.fromList(base64.decode(utf8.decode(opened)));
   }
 
   /// Encrypt arbitrary JSON-serialisable [data] with the group's symmetric key.
