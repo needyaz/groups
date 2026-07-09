@@ -36,17 +36,23 @@ class CharterOwner {
   });
 }
 
-/// Result of [validateCharter]: [valid] with the tip [owner], or invalid with a
-/// machine-stable [reason].
+/// Result of [validateCharter]: [valid] with the tip [owner] and the validated
+/// chain [height] (genesis = 1, each accepted transfer link +1), or invalid with
+/// a machine-stable [reason]. [height] is a MONOTONIC ownership epoch: it only
+/// grows as ownership is transferred, so a persisted high-water mark lets a
+/// client refuse an older (shorter) but still validly-signed chain a malicious
+/// server might replay to roll ownership back.
 class CharterValidationResult {
   final bool valid;
   final String? reason;
   final CharterOwner? owner;
-  const CharterValidationResult._(this.valid, this.reason, this.owner);
+  final int height;
+  const CharterValidationResult._(this.valid, this.reason, this.owner,
+      [this.height = 0]);
   factory CharterValidationResult.invalid(String reason) =>
       CharterValidationResult._(false, reason, null);
-  factory CharterValidationResult.ok(CharterOwner owner) =>
-      CharterValidationResult._(true, null, owner);
+  factory CharterValidationResult.ok(CharterOwner owner, int height) =>
+      CharterValidationResult._(true, null, owner, height);
 }
 
 String _sha256Hex(Uint8List bytes) => std_crypto.sha256.convert(bytes).toString();
@@ -241,7 +247,7 @@ CharterValidationResult validateCharter(
     prevEntry = entry.cast<String, Object?>();
   }
 
-  return CharterValidationResult.ok(owner!);
+  return CharterValidationResult.ok(owner!, chain.length);
 }
 
 /// The owner box public key that incoming owner-authored manifests MUST be
@@ -260,13 +266,25 @@ Uint8List? charterEnforcedOwnerKey(
   List<Object?>? charter,
   String ownerUid,
   String groupId,
+) =>
+    charterEnforcedOwner(sodium, charter, ownerUid, groupId)?.key;
+
+/// Like [charterEnforcedOwnerKey] but also returns the validated chain [height]
+/// (the monotonic ownership epoch — see [CharterValidationResult.height]). Null
+/// under exactly the same fail-open conditions. The height lets a caller reject a
+/// replayed OLDER chain (a rollback) even when that older chain is itself valid.
+({Uint8List key, int height})? charterEnforcedOwner(
+  Sodium sodium,
+  List<Object?>? charter,
+  String ownerUid,
+  String groupId,
 ) {
   if (charter == null) return null;
   final result = validateCharter(sodium, charter, groupId);
   if (!result.valid || result.owner == null) return null;
   if (result.owner!.uid != ownerUid) return null;
   try {
-    return base64.decode(result.owner!.boxPubKeyB64);
+    return (key: base64.decode(result.owner!.boxPubKeyB64), height: result.height);
   } catch (_) {
     return null;
   }
