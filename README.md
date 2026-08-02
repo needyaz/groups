@@ -56,8 +56,52 @@ code is pure Dart. If a pure-Dart (server/CLI) consumer is ever needed, split
 `identity` into a pure `identity_core` (crypto + identity) and a Flutter
 `identity` (storage), and point `groups` at the core.
 
-## Tests
+## Verifying this works
 
-`flutter test` — model serialization, full group lifecycle (create → add →
-remove+rotate → manifest DH round-trip → ownership transfer), group-key blob
-crypto, and the charter golden-vector parity anchor shared with Mylo + Deno.
+Anyone with a clean checkout can reproduce this — no Mylo checkout, no
+backend, no account needed.
+
+Prereqs: Flutter SDK (this package depends on `identity`, a path dependency
+one level up — see Layering note above, `../identity` must exist).
+
+```
+flutter pub get
+flutter test
+```
+
+Expect `All tests passed!` — 24 tests across three files:
+
+- **`group_model_test.dart`** (11) — `Group`/`GroupMember` JSON round-trips,
+  the manifest-vs-local-storage field split, and the `GroupRole` golden test
+  (a pure-member roster serializes byte-for-byte unchanged, proving the
+  role-only-when-non-default backward-compat rule holds).
+- **`group_service_test.dart`** (8) — the full group lifecycle exercised
+  against the REAL crypto end to end: create (mints a hash-bound,
+  self-validating charter) → add member (idempotent) → remove member (rotates
+  the group key) → manifest DH encrypt/decrypt round-trips between owner and
+  member → ownership transfer appends a valid charter link → `setRole` →
+  `sealKeyForMember`/`unsealKey` round-trip → `encryptWithGroupKey`/
+  `decryptWithGroupKey` round-trip.
+- **`ownership_charter_test.dart`** (5) — a freshly-built genesis validates
+  and is hash-bound, **plus the golden-vector parity anchor**: a fixed,
+  pre-signed charter chain (`_vectorJson`, hardcoded in the test) must
+  validate to the exact same owner uid (`90ad2339...`) here as it does in
+  Mylo's Dart suite and the vault's Deno `claim-group` verifier
+  (`supabase/prod/tests/*.ts`). If this one goes red, canonical-JSON bytes,
+  SHA-256, or Ed25519 verification has drifted between the two languages —
+  that's a parity break, not a test flake.
+
+```
+flutter analyze
+```
+
+Expect `No issues found!`.
+
+### What "all green" proves
+
+The lifecycle test proves the generic operations (create/add/remove/transfer/
+manifest crypto/group-key blobs) work end to end against real libsodium, not
+mocks. The charter golden vector proves this package's `validateCharter` and
+Deno's independent reimplementation agree byte-for-byte on the same signed
+input — the same claim `identity`'s cross-language vectors make, scoped to
+the charter/ownership layer instead of the raw crypto primitives.
