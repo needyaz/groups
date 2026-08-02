@@ -29,6 +29,35 @@ The owner publishes one manifest per member: `encryptBlobWithBox(group.toManifes
 DH(ownerSecret, memberPublic))`. A member decrypts with `DH(mySecret, ownerPublic)`
 to learn the roster **and the group key**. This is how the key reaches members.
 
+`decryptManifest` is the package's trust boundary — every byte reaching it is
+peer-authored — so it validates rather than merely decrypting, and returns null
+(never throws) on any failure:
+
+| check | why |
+|---|---|
+| `groupId == expectedGroupId` (caller-pinned) | a peer whose DH key you hold can otherwise hand you a manifest naming a *different* group, and a caller upserting by returned id replaces its view of that group |
+| charter validates for that groupId | a manifest carrying an unvalidatable chain is not trustworthy |
+| charter tip uid `==` manifest `ownerUid` | divergence is the usurpation attack, not a reason to relax |
+| charter tip box key `==` the sending owner's key | only the charter's owner may publish |
+| `height >= minCharterHeight` (caller high-water mark) | rejects a replayed older chain |
+| `groupKey` is 32 bytes; every roster entry's `uid == uidForBoxPublicKey(its key)` | see *Roster binding* |
+
+When a group has **no** charter there is nothing to enforce and only the
+structural checks apply. When it *has* one, the charter is authoritative:
+anything short of a full match is a rejection. (This is deliberately stricter
+than `charterEnforcedOwner`, which fails open on tip divergence for local
+enforcement decisions — at the manifest boundary that fail-open would let a
+member switch enforcement off simply by claiming ownership.)
+
+## Roster binding
+
+A `(uid, publicKeyB64)` pair from an untrusted source is only accepted when
+`uid == uidForBoxPublicKey(publicKey)` — the same derivation `identity` uses.
+Without this, a roster entry can name Alice while carrying Mallory's key, and
+everything addressed "to Alice" (sealed item keys, manifests) encrypts to
+Mallory while the UI shows Alice. Enforced by `addMember` (throws) and by
+`decryptManifest` (rejects the manifest).
+
 ## The app-payload seam
 
 `encryptWithGroupKey(data, groupKey)` / `decryptWithGroupKey` = `crypto_secretbox`
@@ -46,35 +75,100 @@ rehydrates into a blank DB. Wire shape:
 
 - **genesis** payload: `{v:1, type:"genesis", groupId, ownerUid, ownerEdPubKey,
   ownerBoxPubKey, createdAt, nonce, idBinding}`. Signed by the owner's own Ed25519
-  key. `idBinding:"hash"` → `groupId = SHA-256(canonicalJson({v, ownerEdPubKey,
-  ownerBoxPubKey, createdAt, nonce}))` (self-certifying; un-forgeable for a given
-  id). `idBinding:"legacy"` → groupId is a pre-existing UUID (forgeable; treat as
-  fill-blank-only on claim).
+  key. `idBinding` **must** be `"hash"`: `groupId = SHA-256(canonicalJson({v,
+  ownerEdPubKey, ownerBoxPubKey, createdAt, nonce}))`. Every group is therefore
+  self-certifying — the id *is* the hash of its genesis, so no competing genesis
+  can be minted for an existing group.
 - **link** payload: `{v:1, type:"link", groupId, ownerUid, ownerEdPubKey,
   ownerBoxPubKey, prevHash, ts}`. Signed by the **previous** (outgoing) owner's
   key. `prevHash = SHA-256(canonicalJson(prevEntry))`.
 
-`validateCharter(chain, expectedGroupId)` checks, per entry: version, groupId
-match, `uid == SHA-256(boxPub)[0..15]`, signature (genesis by self, links by prior
-owner), hash-binding for the genesis, prevHash continuity. Returns the tip owner +
-`hashBound`. Pure, deterministic, mirrored byte-for-byte by the Deno
-`claim-group` verifier.
+> **Removed: `idBinding:"legacy"`.** It skipped the hash-binding check, so anyone
+> could self-sign a genesis naming *any* groupId and validate as its owner — and
+> because the result was indistinguishable from a genuine charter, it made the
+> group look protected while being trivially forgeable. There is no builder for
+> it and `validateCharter` rejects it (`genesis_not_hash_bound`). Groups created
+> before charters simply stay un-chartered (unenforced, as they already are);
+> they gain protection only by being recreated.
 
-`charterEnforcedOwnerKey()` returns the box key incoming manifests must
-authenticate against — or null (no enforcement) when there's no charter, it's
-invalid, or its tip diverged from `ownerUid`.
+`validateCharter(chain, expectedGroupId)` is pure, deterministic, and mirrored
+byte-for-byte by the server-side verifier. Per entry it checks:
 
-The three charter-minting `GroupService` methods take `signingKeyDomain` (from the
+1. **Schema** — exactly `{payload, sig}`; the payload's key set exactly matches
+   the set for its `type`; no missing or extra fields (an extra field would ride
+   under the signature while being ignored by validation).
+2. **Types** — `v` and the timestamp are `int` (not `1.0`), timestamps within
+   `[0, 2^53-1]`, every other field an ASCII `String`. **This is load-bearing for
+   cross-language parity, not hygiene**: `{"v":1.0}` compares equal to `1` in
+   Dart but canonicalizes to `1.0` there and `1` in JS, so a lax check lets a
+   chain verify in one verifier and fail in the other. Same for integers beyond
+   JS's safe range.
+3. **Binding** — `groupId == expectedGroupId` on every entry (so a link cannot
+   be grafted from another group's chain); `ownerUid == SHA-256(ownerBoxPub)[0..15]`.
+4. **Signatures** — genesis by its own key; each link by the **prior** owner's key.
+5. **Chain** — genesis first, `prevHash` continuity, **no self-links** (an
+   `ownerUid` equal to the previous owner's), strictly increasing timestamps.
+6. **Size** — at most `kMaxCharterEntries` (256) entries, refused before any
+   crypto, since a charter rides inside a manifest and is re-validated repeatedly.
+
+Returns `{valid, reason, owner, height}`. `height` (genesis = 1, +1 per accepted
+link) is a **monotonic ownership epoch**: persist the greatest value ever seen
+and pass it as `minHeight`/`minCharterHeight` to refuse a shorter — but still
+validly signed — chain replayed to roll ownership back. The self-link ban is what
+makes that comparison meaningful: without it, a past owner could pre-sign an
+arbitrarily long fork of no-op self-links and beat the legitimate chain.
+
+`charterEnforcedOwnerKey()` / `charterEnforcedOwner()` return the box key
+incoming manifests must authenticate against (the latter also returns `height`
+so a caller can advance its high-water mark) — or null, meaning *no enforcement*,
+when there's no charter, it's invalid, its tip diverged from `ownerUid`, or its
+height is below `minHeight`. **That null is fail-open by design** (a malformed
+charter must not brick a group), which is why the manifest boundary above does
+not rely on it.
+
+The charter-minting `GroupService` methods take `signingKeyDomain` (from the
 app's `IdentityConfig`) — never hardcoded.
+
+## Canonical JSON
+
+Charter payloads are signed and hashed over `canonicalJsonBytes` from
+`identity`: recursively key-sorted, whitespace-free JSON. For Dart and a JS/Deno
+verifier to produce identical bytes, payloads must contain **only** ASCII string
+values and integers within `[0, 2^53-1]` — no floats, no nulls, no non-ASCII.
+`validateCharter` enforces exactly that on untrusted input before hashing, so a
+non-conforming payload is rejected rather than signed over divergently.
 
 ## Golden vector (parity lock)
 
 Charter `[{genesis…}]` with owner uid `90ad2339401503c0a5645621a9bd89cb` and
 groupId `4bbfb814115b252bfcf5f65122d92bf8cf500f4e06b28c71a6276b2b341b0f29`
-validates in both `test/ownership_charter_test.dart` (Dart) and the vault's
-`charter_parity_test.ts` (Deno). If either side rejects it, parity is broken.
+validates in `test/ownership_charter_test.dart` and in the server-side
+verifier's test suite. If either side rejects it, canonical-JSON bytes, SHA-256,
+or Ed25519 verification has drifted between the two implementations.
+
+## Threat model
+
+See the README's *Why this exists* section for the full statement — what this
+defends against (the server, non-members, removed members going forward,
+usurpation, rollback), what it deliberately trusts (the owner, who is inside the
+trust boundary by definition), what it does not provide (per-message forward
+secrecy, post-compromise security, roster-consistency proofs), and why MLS was
+not used.
+
+Two invariants that live in *calling* code, not here:
+
+- **Rotation only helps if manifests are re-published.** `removeMember` mints a
+  fresh key, but members learn it from a manifest — an app that rotates without
+  re-publishing leaves everyone on the old key.
+- **Manifests carry no freshness field.** Nothing in `toManifestJson()` is
+  monotonic, so a replayed pre-rotation manifest is indistinguishable from a
+  current one and would put members back on a key a removed member holds. A
+  transport that can reorder or replay must carry its own epoch/version outside
+  the manifest, or an app must treat the charter `height` plus its own sequencing
+  as the freshness signal. Closing this inside the manifest is a wire change and
+  is not yet done.
 
 ## Out of scope (deliberately app-local)
 
-No realtime/transport/streams, no `isPaused`/`sharingMode`, no location/place/
-session payloads. Those live in the app.
+No realtime/transport/streams, no domain payload types, no app-specific
+membership semantics. Those live in the app.

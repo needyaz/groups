@@ -187,6 +187,10 @@ class Group {
     this.charter,
   });
 
+  /// [clearCharter] drops the charter instead of inheriting it — without it a
+  /// stale charter can never be removed (`charter ?? this.charter` always
+  /// resurrects it), which matters when a group's ownership has diverged from
+  /// its chain and the caller wants to stop presenting an unenforceable chain.
   Group copyWith({
     String? name,
     String? ownerUid,
@@ -194,6 +198,7 @@ class Group {
     Uint8List? groupKey,
     int? manifestUpdatedAt,
     List<Object?>? charter,
+    bool clearCharter = false,
   }) =>
       Group(
         groupId: groupId,
@@ -203,7 +208,7 @@ class Group {
         groupKey: groupKey ?? this.groupKey,
         createdAt: createdAt,
         manifestUpdatedAt: manifestUpdatedAt ?? this.manifestUpdatedAt,
-        charter: charter ?? this.charter,
+        charter: clearCharter ? null : (charter ?? this.charter),
       );
 
   GroupMember? memberByUid(String uid) {
@@ -260,9 +265,32 @@ class Group {
           .map((e) => GroupMember.fromJson(e as Map<String, dynamic>))
           .toList(),
       groupKey: Uint8List.fromList(base64.decode(j['groupKey'] as String)),
-      createdAt: j['createdAt'] as int,
-      manifestUpdatedAt: j['manifestUpdatedAt'] as int? ?? 0,
+      createdAt: _asInt(j['createdAt'])!,
+      manifestUpdatedAt: _asInt(j['manifestUpdatedAt']) ?? 0,
       charter: rawCharter is List ? rawCharter.cast<Object?>() : null,
     );
   }
+
+  /// Tolerant [fromJson] for untrusted input (a decrypted peer manifest, a
+  /// possibly-corrupt local record): returns null instead of throwing on a
+  /// missing field, a wrong type, or malformed base64. Prefer this anywhere the
+  /// JSON did not come from this device.
+  static Group? tryFromJson(Map<String, dynamic> j) {
+    try {
+      return Group.fromJson(j);
+    } catch (_) {
+      return null;
+    }
+  }
+}
+
+/// Accepts an int, or a double/num that is exactly integral — JSON producers in
+/// other languages emit `1.7e12` for a whole-number timestamp, which a bare
+/// `as int` cast rejects with a TypeError.
+int? _asInt(Object? v) {
+  if (v is int) return v;
+  if (v is num && v == v.roundToDouble() && v.abs() <= 9007199254740991) {
+    return v.toInt();
+  }
+  return null;
 }

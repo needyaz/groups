@@ -8,7 +8,7 @@ import 'package:identity/identity.dart';
 /// carried in the group manifest so it rehydrates correctly into a blank DB.
 /// This file defines the format, the chain builders (genesis + transfer links),
 /// and the pure validator used by both client-side enforcement and (ported to
-/// Deno) a `claim-group` edge function.
+/// another language) a server-side `claim-group` verifier.
 ///
 /// Charter wire shape (rides JSON in the manifest):
 /// ```text
@@ -21,8 +21,37 @@ import 'package:identity/identity.dart';
 ///             ownerBoxPubKey, prevHash, ts}
 /// genesis.sig is by the owner's own key; each link.sig is by the PREVIOUS
 /// owner's key (the outgoing owner authorizes the next).
+///
+/// **Every group is self-certifying**: `groupId` IS the hash of its genesis
+/// payload, so no one can mint a competing genesis for an existing group.
+/// `idBinding` must be `"hash"` — the historical `"legacy"` binding (which
+/// skipped that check and therefore let anyone sign a genesis naming any
+/// group) is no longer accepted or constructible.
 
 const int kCharterVersion = 1;
+
+/// Hard cap on chain length. Each entry costs an Ed25519 verify plus two
+/// SHA-256-over-canonical-JSON passes, and charters ride inside manifests that
+/// get persisted, re-published, and re-validated server-side — an unbounded
+/// chain is a CPU DoS. Real chains are a handful of entries.
+const int kMaxCharterEntries = 256;
+
+/// Largest integer that survives a round trip through a JS `number`
+/// (`Number.MAX_SAFE_INTEGER`). Timestamps above this canonicalize differently
+/// in Dart and JS, which would split the two verifiers.
+const int _kMaxSafeInt = 9007199254740991;
+
+/// Exact key sets. Any missing or extra key is a rejection: an unknown field
+/// would be covered by the signature but ignored by validation, and could be
+/// interpreted by a future or foreign implementation.
+const Set<String> _kGenesisKeys = {
+  'v', 'type', 'groupId', 'ownerUid', 'ownerEdPubKey', 'ownerBoxPubKey',
+  'createdAt', 'nonce', 'idBinding',
+};
+const Set<String> _kLinkKeys = {
+  'v', 'type', 'groupId', 'ownerUid', 'ownerEdPubKey', 'ownerBoxPubKey',
+  'prevHash', 'ts',
+};
 
 /// The owner an entry establishes / the validated tip owner.
 class CharterOwner {
@@ -41,7 +70,9 @@ class CharterOwner {
 /// a machine-stable [reason]. [height] is a MONOTONIC ownership epoch: it only
 /// grows as ownership is transferred, so a persisted high-water mark lets a
 /// client refuse an older (shorter) but still validly-signed chain a malicious
-/// server might replay to roll ownership back.
+/// server might replay to roll ownership back. Self-links (a "transfer" to the
+/// current owner) are rejected precisely so height cannot be inflated by a
+/// past owner pre-signing a long fork.
 class CharterValidationResult {
   final bool valid;
   final String? reason;
@@ -67,6 +98,16 @@ String _uidForBoxKey(Uint8List boxPub) {
       .join();
 }
 
+/// True when every code unit is printable ASCII. Charter payloads carry only
+/// base64/hex/uid strings, and [canonicalJsonBytes] only guarantees Dart/JS
+/// byte-agreement for ASCII — so anything else is rejected before hashing.
+bool _isAscii(String s) {
+  for (final u in s.codeUnits) {
+    if (u < 0x20 || u > 0x7e) return false;
+  }
+  return true;
+}
+
 /// Deterministic, self-certifying group id derived from a genesis payload's
 /// binding fields (NOT including groupId itself — avoids circularity). Because
 /// it commits to the creator's keys, an attacker cannot craft a different
@@ -86,16 +127,37 @@ String charterGroupId(Map<String, Object?> genesisPayload) => _sha256Hex(
 String charterEntryHash(Map<String, Object?> entry) =>
     _sha256Hex(canonicalJsonBytes(entry));
 
-/// The groupId an entry's payload declares.
-String charterEntryGroupId(Map<String, Object?> entry) {
-  final payload = (entry['payload']! as Map).cast<String, Object?>();
+/// The groupId an entry's payload declares, or null if [entry] is malformed.
+/// Takes untrusted input, so it never throws.
+String? charterEntryGroupId(Map<String, Object?> entry) {
+  final payload = entry['payload'];
+  if (payload is! Map) return null;
   final gid = payload['groupId'];
-  return gid! as String;
+  return gid is String ? gid : null;
 }
 
-/// Build and sign a genesis entry. For [hashBound] groups the groupId is derived
-/// from the payload (self-certifying root); for legacy groups pass the existing
-/// [legacyGroupId].
+/// The timestamp an entry declares (`createdAt` on a genesis, `ts` on a link),
+/// or null if malformed. [validateCharter] requires these to strictly increase
+/// along the chain, so a builder appending a link must pick a `ts` greater than
+/// this — see [nextCharterTimestamp].
+int? charterEntryTimestamp(Map<String, Object?> entry) {
+  final payload = entry['payload'];
+  if (payload is! Map) return null;
+  final v = payload['ts'] ?? payload['createdAt'];
+  return v is int ? v : null;
+}
+
+/// A timestamp safe to put on a link appended after [prevEntry]: wall-clock
+/// now, bumped past the previous entry when necessary. Two transfers inside the
+/// same millisecond are legitimate and must not produce an unvalidatable chain.
+int nextCharterTimestamp(Map<String, Object?> prevEntry, int now) {
+  final prev = charterEntryTimestamp(prevEntry);
+  if (prev == null) return now;
+  return now > prev ? now : prev + 1;
+}
+
+/// Build and sign a hash-bound genesis entry: the returned payload's `groupId`
+/// is the hash of the payload itself, so the group is self-certifying.
 Map<String, Object?> buildCharterGenesis(
   Sodium sodium, {
   required SecureKey ownerSignSecretKey,
@@ -104,8 +166,6 @@ Map<String, Object?> buildCharterGenesis(
   required String ownerBoxPubKeyB64,
   required int createdAt,
   required String nonce,
-  bool hashBound = true,
-  String? legacyGroupId,
 }) {
   final payload = <String, Object?>{
     'v': kCharterVersion,
@@ -115,18 +175,18 @@ Map<String, Object?> buildCharterGenesis(
     'ownerBoxPubKey': ownerBoxPubKeyB64,
     'createdAt': createdAt,
     'nonce': nonce,
-    'idBinding': hashBound ? 'hash' : 'legacy',
+    'idBinding': 'hash',
   };
-  payload['groupId'] = hashBound
-      ? charterGroupId(payload)
-      : (legacyGroupId ?? (throw ArgumentError('legacyGroupId required')));
+  payload['groupId'] = charterGroupId(payload);
   final sig =
       signDetached(sodium, canonicalJsonBytes(payload), ownerSignSecretKey);
   return {'payload': payload, 'sig': base64.encode(sig)};
 }
 
 /// Build and sign a transfer link naming a new owner. Signed by the CURRENT
-/// (outgoing) owner's key.
+/// (outgoing) owner's key. [ts] must be strictly greater than the previous
+/// entry's timestamp, and [newOwnerUid] must differ from the current owner —
+/// [validateCharter] rejects both otherwise.
 Map<String, Object?> buildCharterLink(
   Sodium sodium, {
   required Map<String, Object?> prevEntry,
@@ -153,16 +213,29 @@ Map<String, Object?> buildCharterLink(
 }
 
 /// Validate a charter chain for [expectedGroupId] and return the tip owner.
-/// Pure and deterministic — no I/O. A Deno `claim-group` verifier mirrors this
+/// Pure and deterministic — no I/O. A server-side verifier mirrors this
 /// exactly. Every failure returns a stable [reason] rather than throwing.
+///
+/// Input is hostile by construction (charters arrive inside peer-authored
+/// manifests), so every payload is schema-checked — exact key set, integer
+/// types within JS-safe bounds, ASCII strings — BEFORE it is hashed or
+/// verified. That check is load-bearing for cross-language parity, not just
+/// hygiene: `{"v":1.0}` compares equal to `1` in Dart but canonicalizes to
+/// `1.0` here and `1` in JS, which would let a chain verify in one language
+/// and not the other.
 CharterValidationResult validateCharter(
   Sodium sodium,
   List<Object?> chain,
   String expectedGroupId,
 ) {
   if (chain.isEmpty) return CharterValidationResult.invalid('empty_chain');
+  if (chain.length > kMaxCharterEntries) {
+    return CharterValidationResult.invalid('chain_too_long');
+  }
 
   String? prevOwnerEdB64; // key that must sign the next link
+  String? prevOwnerUid; // to reject self-links
+  int prevTs = -1; // to require strictly increasing timestamps
   Map<String, Object?>? prevEntry;
   CharterOwner? owner;
 
@@ -171,6 +244,12 @@ CharterValidationResult validateCharter(
     if (entry is! Map) {
       return CharterValidationResult.invalid('entry_${i}_not_map');
     }
+    // Exactly {payload, sig} — nothing else is covered by the signature.
+    if (entry.length != 2 ||
+        !entry.containsKey('payload') ||
+        !entry.containsKey('sig')) {
+      return CharterValidationResult.invalid('entry_${i}_malformed');
+    }
     final rawPayload = entry['payload'];
     final sig = entry['sig'];
     if (rawPayload is! Map || sig is! String) {
@@ -178,18 +257,41 @@ CharterValidationResult validateCharter(
     }
     final p = rawPayload.cast<String, Object?>();
 
-    if (p['v'] != kCharterVersion) {
+    final isGenesis = i == 0;
+    final expectedType = isGenesis ? 'genesis' : 'link';
+    if (p['type'] != expectedType) {
+      return CharterValidationResult.invalid(
+          isGenesis ? 'first_entry_not_genesis' : 'entry_${i}_not_link');
+    }
+    // Exact key set: no missing fields, no extras riding under the signature.
+    final allowed = isGenesis ? _kGenesisKeys : _kLinkKeys;
+    if (p.length != allowed.length || !allowed.every(p.containsKey)) {
+      return CharterValidationResult.invalid('entry_${i}_bad_schema');
+    }
+    // Strict types. `is int` rejects the float/bigint forms that canonicalize
+    // differently in Dart and JS.
+    if (p['v'] is! int || p['v'] != kCharterVersion) {
       return CharterValidationResult.invalid('entry_${i}_bad_version');
     }
+    final tsField = isGenesis ? 'createdAt' : 'ts';
+    final tsValue = p[tsField];
+    if (tsValue is! int || tsValue < 0 || tsValue > _kMaxSafeInt) {
+      return CharterValidationResult.invalid('entry_${i}_bad_timestamp');
+    }
+    for (final key in allowed) {
+      if (key == 'v' || key == tsField) continue;
+      final v = p[key];
+      if (v is! String || !_isAscii(v)) {
+        return CharterValidationResult.invalid('entry_${i}_bad_field_$key');
+      }
+    }
+
     if (p['groupId'] != expectedGroupId) {
       return CharterValidationResult.invalid('entry_${i}_groupid_mismatch');
     }
-    final ownerUid = p['ownerUid'];
-    final edB64 = p['ownerEdPubKey'];
-    final boxB64 = p['ownerBoxPubKey'];
-    if (ownerUid is! String || edB64 is! String || boxB64 is! String) {
-      return CharterValidationResult.invalid('entry_${i}_missing_owner_fields');
-    }
+    final ownerUid = p['ownerUid']! as String;
+    final edB64 = p['ownerEdPubKey']! as String;
+    final boxB64 = p['ownerBoxPubKey']! as String;
     final Uint8List edPub, boxPub, sigBytes;
     try {
       edPub = base64.decode(edB64);
@@ -205,28 +307,31 @@ CharterValidationResult validateCharter(
 
     final payloadBytes = canonicalJsonBytes(p);
 
-    if (i == 0) {
-      if (p['type'] != 'genesis') {
-        return CharterValidationResult.invalid('first_entry_not_genesis');
+    if (isGenesis) {
+      // Only hash-binding is accepted: the groupId must BE the hash of this
+      // payload. The old "legacy" binding skipped this and let anyone sign a
+      // genesis naming any group.
+      if (p['idBinding'] != 'hash') {
+        return CharterValidationResult.invalid('genesis_not_hash_bound');
+      }
+      if (charterGroupId(p) != expectedGroupId) {
+        return CharterValidationResult.invalid('genesis_hash_binding_mismatch');
       }
       if (!verifyDetached(sodium, payloadBytes, sigBytes, edPub)) {
         return CharterValidationResult.invalid('genesis_signature_invalid');
       }
-      final idBinding = p['idBinding'];
-      if (idBinding == 'hash') {
-        if (charterGroupId(p) != expectedGroupId) {
-          return CharterValidationResult.invalid(
-              'genesis_hash_binding_mismatch');
-        }
-      } else if (idBinding != 'legacy') {
-        return CharterValidationResult.invalid('genesis_unknown_id_binding');
-      }
     } else {
-      if (p['type'] != 'link') {
-        return CharterValidationResult.invalid('entry_${i}_not_link');
-      }
       if (p['prevHash'] != charterEntryHash(prevEntry!)) {
         return CharterValidationResult.invalid('entry_${i}_prevhash_mismatch');
+      }
+      // A "transfer" to the sitting owner is not a transfer. Allowing it would
+      // let a past owner pre-sign an arbitrarily long fork of self-links and
+      // win any longest-chain/high-water comparison against the legitimate one.
+      if (ownerUid == prevOwnerUid) {
+        return CharterValidationResult.invalid('entry_${i}_self_link');
+      }
+      if (tsValue <= prevTs) {
+        return CharterValidationResult.invalid('entry_${i}_ts_not_increasing');
       }
       final Uint8List prevEd;
       try {
@@ -244,6 +349,8 @@ CharterValidationResult validateCharter(
     owner =
         CharterOwner(uid: ownerUid, edPubKeyB64: edB64, boxPubKeyB64: boxB64);
     prevOwnerEdB64 = edB64;
+    prevOwnerUid = ownerUid;
+    prevTs = tsValue;
     prevEntry = entry.cast<String, Object?>();
   }
 
@@ -253,36 +360,46 @@ CharterValidationResult validateCharter(
 /// The owner box public key that incoming owner-authored manifests MUST be
 /// authenticated against, per the charter — or `null` when charter enforcement
 /// does **not** apply. Returns null (fail open, no enforcement) when:
-///   - there is no charter (legacy / un-backfilled group);
+///   - there is no charter (group predates charters / not yet chartered);
 ///   - the charter is invalid (don't brick a group on a malformed charter);
 ///   - the charter tip has diverged from [ownerUid] (e.g. an ownership transfer
 ///     the deferred transfer-link hasn't recorded — we can't verify it, so we
-///     stop enforcing rather than reject a legitimate new owner).
+///     stop enforcing rather than reject a legitimate new owner);
+///   - the validated height is below [minHeight] (a replayed older chain).
 ///
 /// When non-null, a manifest that does not authenticate against this key is a
 /// usurpation attempt and must be rejected.
+///
+/// Pass [minHeight] — a persisted high-water mark of the greatest height ever
+/// seen for this group — to get anti-rollback enforcement. Omitting it accepts
+/// any validly-signed chain, including a shorter historical one.
 Uint8List? charterEnforcedOwnerKey(
   Sodium sodium,
   List<Object?>? charter,
   String ownerUid,
-  String groupId,
-) =>
-    charterEnforcedOwner(sodium, charter, ownerUid, groupId)?.key;
+  String groupId, {
+  int minHeight = 0,
+}) =>
+    charterEnforcedOwner(sodium, charter, ownerUid, groupId,
+            minHeight: minHeight)
+        ?.key;
 
 /// Like [charterEnforcedOwnerKey] but also returns the validated chain [height]
-/// (the monotonic ownership epoch — see [CharterValidationResult.height]). Null
-/// under exactly the same fail-open conditions. The height lets a caller reject a
-/// replayed OLDER chain (a rollback) even when that older chain is itself valid.
+/// (the monotonic ownership epoch — see [CharterValidationResult.height]), so a
+/// caller can persist it as the new high-water mark. Null under exactly the
+/// same fail-open conditions.
 ({Uint8List key, int height})? charterEnforcedOwner(
   Sodium sodium,
   List<Object?>? charter,
   String ownerUid,
-  String groupId,
-) {
+  String groupId, {
+  int minHeight = 0,
+}) {
   if (charter == null) return null;
   final result = validateCharter(sodium, charter, groupId);
   if (!result.valid || result.owner == null) return null;
   if (result.owner!.uid != ownerUid) return null;
+  if (result.height < minHeight) return null;
   try {
     return (key: base64.decode(result.owner!.boxPubKeyB64), height: result.height);
   } catch (_) {

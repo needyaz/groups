@@ -54,7 +54,8 @@ class GroupService {
         nonce: base64.encode(sodium.randombytes.buf(16)),
       );
       return Group(
-        groupId: charterEntryGroupId(genesis),
+        // Non-null: buildCharterGenesis always sets a hash-bound groupId.
+        groupId: charterEntryGroupId(genesis)!,
         name: name,
         ownerUid: identity.uid,
         members: [member],
@@ -67,43 +68,35 @@ class GroupService {
     }
   }
 
-  /// Trust-on-first-upgrade backfill for groups that predate charters: if
-  /// [identity] owns [group] and it has no charter, mint a **legacy** genesis
-  /// (the groupId stays the existing id — not hash-bound, since it wasn't
-  /// derived from a genesis). Returns the group unchanged for non-owners or
-  /// already-chartered groups. Idempotent.
-  static Group backfillCharter({
-    required Sodium sodium,
-    required Group group,
-    required Identity identity,
-    required String signingKeyDomain,
-  }) {
-    if (group.charter != null) return group;
-    if (group.ownerUid != identity.uid) return group;
-    final signing =
-        deriveSigningKeyPair(sodium, identity.seed, domain: signingKeyDomain);
-    try {
-      final genesis = buildCharterGenesis(
-        sodium,
-        ownerSignSecretKey: signing.secretKey,
-        ownerUid: identity.uid,
-        ownerEdPubKeyB64: base64.encode(signing.publicKey),
-        ownerBoxPubKeyB64: base64.encode(identity.keyPair.publicKey),
-        createdAt: group.createdAt,
-        nonce: base64.encode(sodium.randombytes.buf(16)),
-        hashBound: false,
-        legacyGroupId: group.groupId,
-      );
-      return group.copyWith(charter: [genesis]);
-    } finally {
-      signing.secretKey.dispose();
-    }
-  }
-
+  /// Add [member] to the roster.
+  ///
+  /// Rejects a member whose `uid` is not the uid derived from its own box
+  /// public key. A roster entry is a `(uid, publicKey)` pair from an untrusted
+  /// source, and everything addressed "to that member" — sealed item keys,
+  /// manifests — is encrypted to the KEY while the UI shows the UID. Without
+  /// this check a roster entry can name Alice and carry Mallory's key.
+  ///
+  /// Idempotent: a uid already present returns the group unchanged.
+  /// Throws [ArgumentError] when the pair is inconsistent.
   static Group addMember(Group group, GroupMember member) {
-    // Idempotent: if already present, return unchanged.
+    if (!isMemberSelfConsistent(member)) {
+      throw ArgumentError.value(
+          member.uid, 'member.uid', 'uid does not match its box public key');
+    }
     if (group.memberByUid(member.uid) != null) return group;
     return group.copyWith(members: [...group.members, member]);
+  }
+
+  /// True when [member]'s uid is the uid derived from its own box public key
+  /// (`uidForBoxPublicKey`). False for a malformed key as well as a mismatch.
+  static bool isMemberSelfConsistent(GroupMember member) {
+    try {
+      final key = member.publicKey;
+      if (key.length != 32) return false;
+      return uidForBoxPublicKey(key) == member.uid;
+    } catch (_) {
+      return false;
+    }
   }
 
   static Group removeMember({
@@ -136,13 +129,22 @@ class GroupService {
     return group.copyWith(members: updated);
   }
 
-  /// Pure ownership-uid change (no charter). Used for the uid mechanics and by
-  /// [transferOwnershipWithCharter] as its fallback.
+  /// Pure ownership-uid change with NO charter link.
+  ///
+  /// Leaves `ownerUid` diverged from the charter tip, which
+  /// [charterEnforcedOwner] treats as "stop enforcing" — so this permanently
+  /// disables usurpation protection for the group. Prefer
+  /// [transferOwnershipWithCharter]; reach for this only when there is
+  /// deliberately no charter to extend.
+  ///
+  /// Throws [ArgumentError] if [newOwnerUid] is not a member — this was
+  /// previously an `assert`, which is stripped in release builds and so let
+  /// production set `ownerUid` to an arbitrary string.
   static Group transferOwnership(Group group, String newOwnerUid) {
-    assert(
-      group.memberByUid(newOwnerUid) != null,
-      'New owner must be a member of the group',
-    );
+    if (group.memberByUid(newOwnerUid) == null) {
+      throw ArgumentError.value(
+          newOwnerUid, 'newOwnerUid', 'New owner must be a member of the group');
+    }
     return group.copyWith(ownerUid: newOwnerUid);
   }
 
@@ -151,15 +153,23 @@ class GroupService {
   /// owner ([currentOwner]) and names the new owner's Ed25519 key, learned from
   /// the member's piggybacked publishes ([GroupMember.edPubKeyB64]).
   ///
-  /// If there's no charter, or the new owner's ed key isn't known yet, falls
-  /// back to a plain [transferOwnership]: the owner changes but the charter
-  /// isn't extended.
+  /// If there's no charter, or the new owner's Ed25519 key isn't known yet,
+  /// this throws [StateError] unless [allowUnchartedFallback] is set.
+  ///
+  /// That default is deliberate. The fallback silently produces a group whose
+  /// `ownerUid` no longer matches the charter tip, which turns usurpation
+  /// enforcement OFF for every member — permanently, since the stale charter
+  /// can never be reconciled. "The new owner's ed key hasn't piggybacked yet"
+  /// is a routine, retryable condition, so the caller should retry rather than
+  /// silently downgrade the group's security. Callers that genuinely want the
+  /// downgrade must ask for it.
   static Group transferOwnershipWithCharter({
     required Sodium sodium,
     required Group group,
     required Identity currentOwner,
     required String newOwnerUid,
     required String signingKeyDomain,
+    bool allowUnchartedFallback = false,
   }) {
     final newMember = group.memberByUid(newOwnerUid);
     final charter = group.charter;
@@ -181,7 +191,10 @@ class GroupService {
           newOwnerUid: newOwnerUid,
           newOwnerEdPubKeyB64: newEd,
           newOwnerBoxPubKeyB64: newMember.publicKeyB64,
-          ts: DateTime.now().millisecondsSinceEpoch,
+          // Bumped past the previous entry when two transfers land in the
+          // same millisecond — the validator requires strict increase.
+          ts: nextCharterTimestamp(
+              prevEntry, DateTime.now().millisecondsSinceEpoch),
         );
         return group
             .copyWith(ownerUid: newOwnerUid, charter: [...charter, link]);
@@ -190,6 +203,15 @@ class GroupService {
       }
     }
 
+    if (!allowUnchartedFallback) {
+      throw StateError(
+        'Cannot extend the charter for this transfer '
+        '(${charter == null || charter.isEmpty ? 'group has no charter' : newMember == null ? 'new owner is not a member' : "new owner's edPubKeyB64 is not known yet"}). '
+        'Retry once the new owner\'s key is known, or pass '
+        'allowUnchartedFallback: true to accept permanently disabling '
+        'charter enforcement for this group.',
+      );
+    }
     return transferOwnership(group, newOwnerUid);
   }
 
@@ -210,21 +232,81 @@ class GroupService {
     }
   }
 
-  /// Decrypt a manifest blob using DH(mySecretKey, ownerPublicKey).
-  static Group decryptManifest({
+  /// Decrypt and VALIDATE a manifest blob using DH(mySecretKey,
+  /// [ownerPublicKey]). Returns null on any failure — this is the package's
+  /// trust boundary, and every input to it is peer-authored.
+  ///
+  /// Beyond decrypting, this enforces:
+  ///  - the manifest's `groupId` equals [expectedGroupId]. Without this pin, a
+  ///    peer whose DH key you legitimately hold can hand you a manifest naming
+  ///    a DIFFERENT group, and a caller upserting by the returned groupId
+  ///    replaces its view of that other group.
+  ///  - when a charter is present it is AUTHORITATIVE: it must validate for
+  ///    that groupId, its tip uid must equal the manifest's `ownerUid`, and
+  ///    [ownerPublicKey] must be the tip's box key. Note this is deliberately
+  ///    stricter than [charterEnforcedOwner], which fails open when the tip has
+  ///    diverged from `ownerUid` — here that divergence IS the attack (a member
+  ///    who simply claims ownership would otherwise switch enforcement off).
+  ///    Pass [minCharterHeight] (a persisted high-water mark) to also reject a
+  ///    replayed older chain.
+  ///  - the group key is 32 bytes and every roster entry's uid matches its own
+  ///    box key (see [isMemberSelfConsistent]).
+  ///
+  /// A null return means "do not trust this manifest"; it never throws on
+  /// malformed or hostile input.
+  static Group? decryptManifest({
     required Sodium sodium,
     required String blob,
     required Identity myIdentity,
     required Uint8List ownerPublicKey,
+    required String expectedGroupId,
+    int minCharterHeight = 0,
   }) {
-    final box = deriveSharedSecret(
-        sodium, ownerPublicKey, myIdentity.keyPair.secretKey);
+    PrecalculatedBox? box;
     try {
-      final data = decryptBlobWithBox(sodium, blob, box) as Map<String, dynamic>;
-      return Group.fromJson(data);
+      box = deriveSharedSecret(
+          sodium, ownerPublicKey, myIdentity.keyPair.secretKey);
+      final decoded = decryptBlobWithBox(sodium, blob, box);
+      if (decoded is! Map<String, dynamic>) return null;
+      final group = Group.tryFromJson(decoded);
+      if (group == null) return null;
+
+      if (group.groupId != expectedGroupId) return null;
+      if (group.groupKey.length != 32) return null;
+      for (final m in group.members) {
+        if (!isMemberSelfConsistent(m)) return null;
+      }
+      // A charter, if present, is authoritative — anything short of a full
+      // match is a rejection, never a fallback to "unenforced".
+      final charter = group.charter;
+      if (charter != null) {
+        final result = validateCharter(sodium, charter, group.groupId);
+        if (!result.valid || result.owner == null) return null;
+        if (result.height < minCharterHeight) return null;
+        if (result.owner!.uid != group.ownerUid) return null;
+        final Uint8List tipKey;
+        try {
+          tipKey = base64.decode(result.owner!.boxPubKeyB64);
+        } catch (_) {
+          return null;
+        }
+        if (!_bytesEqual(tipKey, ownerPublicKey)) return null;
+      }
+      return group;
+    } catch (_) {
+      return null;
     } finally {
-      box.dispose();
+      box?.dispose();
     }
+  }
+
+  static bool _bytesEqual(Uint8List a, Uint8List b) {
+    if (a.length != b.length) return false;
+    var diff = 0;
+    for (var i = 0; i < a.length; i++) {
+      diff |= a[i] ^ b[i];
+    }
+    return diff == 0;
   }
 
   /// Seal an opaque [keyBytes] (e.g. a per-item content key) to [member]'s box
@@ -243,6 +325,9 @@ class GroupService {
 
   /// Open a blob produced by [sealKeyForMember] with [myKeyPair]. Returns the
   /// raw key bytes, or null if this keypair is not the sealed recipient.
+  /// Returns null on any failure. Sealed boxes are ANONYMOUS — anyone holding
+  /// your public key can seal arbitrary bytes to you — so the inner content is
+  /// untrusted and non-base64/non-UTF-8 payloads must not escape as exceptions.
   static Uint8List? unsealKey({
     required Sodium sodium,
     required String sealed,
@@ -250,8 +335,12 @@ class GroupService {
   }) {
     final opened = openSealedBytes(sodium, sealed, myKeyPair);
     if (opened == null) return null;
-    // sealKeyForMember sealed the base64 text of the key; decode it back.
-    return Uint8List.fromList(base64.decode(utf8.decode(opened)));
+    try {
+      // sealKeyForMember sealed the base64 text of the key; decode it back.
+      return Uint8List.fromList(base64.decode(utf8.decode(opened)));
+    } catch (_) {
+      return null;
+    }
   }
 
   /// Encrypt arbitrary JSON-serialisable [data] with the group's symmetric key.
