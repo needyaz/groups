@@ -1,8 +1,8 @@
 # groups
 
-Shared end-to-end-encrypted group membership for Luci apps. Extracted from Mylo
-(`models/group.dart`, `services/group_service.dart`, `crypto/ownership_charter.dart`).
-The crypto is byte-identical to that source.
+End-to-end-encrypted group membership: models, key rotation, per-member
+encrypted manifests, and a signed ownership charter. Extracted from a shipped
+production app; the crypto is byte-identical to that source.
 
 This is the L1 layer: it builds on the [`identity`](../identity) package and has
 **no domain coupling** — it knows about groups, members, keys, manifests, and
@@ -11,7 +11,7 @@ ownership, but not about what payloads ride inside the group key.
 ## Why this exists — threat model, and why not MLS
 
 This layer is a deliberately small protocol for **small, owner-administered
-groups** — a family, a shared vault, a handful of people who all know who
+groups** — a family, a shared folder, a handful of people who all know who
 started the group. That design point, stated up front, is what makes the rest
 of the trade-offs coherent.
 
@@ -44,10 +44,14 @@ of the trade-offs coherent.
   consistency). This is not an oversight: in an owner-administered group the
   owner is *definitionally* inside the trust boundary — they invited everyone
   and control membership anyway.
-- **Charter enforcement is fail-open by design.** A missing or invalid charter
-  yields *no enforcement* rather than a bricked group (legacy groups predate
-  charters; a corrupted charter shouldn't destroy access to data). Enforcement
-  ratchets on when a valid charter names the expected owner.
+- **Local charter enforcement is fail-open by design.** For a *locally held*
+  group, a missing or invalid charter yields no enforcement rather than a
+  bricked group — a corrupted charter shouldn't destroy access to data, and
+  groups created before charters existed have none. Note this does **not**
+  apply at the manifest boundary: when an incoming manifest carries a charter,
+  it is authoritative and anything short of a full match is rejected, because
+  there "fall open" would let a member disable enforcement by simply claiming
+  ownership.
 
 ### What it does not provide
 
@@ -88,8 +92,7 @@ made honestly and in the open.
 
 - **`group.dart`** — `Group` + `GroupMember` models, with a clean split between
   the encrypted **manifest** (server/peers) and **local-only** fields (avatars,
-  local labels). Location-domain flags (`isPaused`, `sharingMode`) were dropped —
-  they belong in the app layer.
+  local labels). App-specific membership flags belong in the app layer, not here.
 - **`group_service.dart`** — the generic operations:
   - `createGroup` — mint a group + its self-certifying ownership charter
   - `addMember` (idempotent; enforces uid↔key binding) / `removeMember`
@@ -114,7 +117,7 @@ final group = GroupService.createGroup(
   sodium: sodium,
   name: 'Family',
   identity: myIdentity,
-  signingKeyDomain: vaultIdentity.signingKeyDomain, // from IdentityConfig
+  signingKeyDomain: myIdentityConfig.signingKeyDomain,
 );
 
 // Encrypt an app payload for the group:
@@ -152,8 +155,8 @@ code is pure Dart. If a pure-Dart (server/CLI) consumer is ever needed, split
 
 ## Verifying this works
 
-Anyone with a clean checkout can reproduce this — no Mylo checkout, no
-backend, no account needed. One extra step vs. a normal standalone repo,
+Anyone with a clean checkout can reproduce this — no backend, no account
+needed. One extra step vs. a normal standalone repo,
 though:
 
 > **`identity` must be cloned as a sibling directory.** `groups` depends on
@@ -226,3 +229,26 @@ implementation's own lineage rather than by an independent one, so it locks
 *drift* between the two verifiers, not the correctness of the format itself.
 Regenerating it from an independently-implemented signer (as `identity`'s
 derivation vectors now are) is tracked work.
+
+## Known gaps
+
+Stated plainly rather than left for a reader to find:
+
+- **Manifests carry no freshness field.** Nothing in `toManifestJson()` is
+  monotonic, so a replayed pre-rotation manifest — validly signed by the owner,
+  no forgery needed — is indistinguishable from a current one and can put
+  members back on a key a removed member still holds. Closing this properly
+  means adding a key epoch to the manifest, which is a wire change. Until then
+  a transport that can replay must carry its own sequencing.
+- **The charter golden vector is not independently generated** (see above).
+- **No roster-consistency proof**: a malicious owner can in principle show
+  different members different rosters. See the threat model.
+
+## License
+
+MIT — see [LICENSE](LICENSE). No third-party code is vendored into this repo.
+
+This package's only dependency is [`identity`](../identity) (MIT), which in turn
+brings libsodium (ISC) and its Dart bindings plus BSD-3-Clause Dart packages —
+see that repo's License section for the full table and the notice obligations
+that apply when redistributing built apps.

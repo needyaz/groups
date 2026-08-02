@@ -1,5 +1,5 @@
 name: groups
-description: "Shared end-to-end-encrypted group membership, key rotation, manifests, and signed ownership charter for Luci apps."
+description: "End-to-end-encrypted group membership, key rotation, manifests, and a signed ownership charter."
 version: 0.1.0
 publish_to: 'none'
 

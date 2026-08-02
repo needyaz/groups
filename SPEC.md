@@ -132,7 +132,7 @@ app's `IdentityConfig`) — never hardcoded.
 ## Canonical JSON
 
 Charter payloads are signed and hashed over `canonicalJsonBytes` from
-`identity`: recursively key-sorted, whitespace-free JSON. For Dart and a JS/Deno
+`identity`: recursively key-sorted, whitespace-free JSON. For Dart and a JS
 verifier to produce identical bytes, payloads must contain **only** ASCII string
 values and integers within `[0, 2^53-1]` — no floats, no nulls, no non-ASCII.
 `validateCharter` enforces exactly that on untrusted input before hashing, so a

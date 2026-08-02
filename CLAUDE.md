@@ -5,68 +5,88 @@ Guidance for Claude Code when working in this package.
 ## What this is
 
 `groups` is the **L1 shared substrate** for end-to-end-encrypted group
-membership across the Luci apps: the `Group`/`GroupMember` models, the generic
-`GroupService` operations (create, add, remove + key rotation, ownership
-transfer, per-member manifest DH crypto, and group-key blob crypto), and the
-signed **ownership charter** (genesis + transfer links + validator).
+membership: the `Group`/`GroupMember` models, the generic `GroupService`
+operations (create, add, remove + key rotation, ownership transfer, per-member
+manifest DH crypto, and group-key blob crypto), and the signed **ownership
+charter** (genesis + transfer links + validator).
 
-Extracted from Mylo (`models/group.dart`, `services/group_service.dart`,
-`crypto/ownership_charter.dart`); the crypto is byte-identical to that source.
-It depends on [`identity`](../identity) and has **no domain coupling** — it knows
-about groups, members, keys, manifests, and ownership, but not about what rides
-inside the group key.
+Extracted from a shipped production app; the crypto is byte-identical to that
+source. It depends on [`identity`](../identity) and has **no domain coupling** —
+it knows about groups, members, keys, manifests, and ownership, but not about
+what rides inside the group key.
 
 ## Dependency direction
 
 ```
-app (vault / mylo)  →  groups  →  identity
+app  →  groups  →  identity
 ```
 
-Nothing here may import an app. `groups` is a path dependency (like `sammy`).
+Nothing here may import an app. `groups` is consumed as a path dependency.
 
 ## The key seam: `encryptWithGroupKey` / `decryptWithGroupKey`
 
-This is where an app's own payloads ride. Mylo puts `LocationPayload`/`Place`
-through it; Vault puts `VaultItem` through it. **Do not add domain-specific
-methods here** (no `encryptGroupLocation`, no `encryptItems`) — those belong in
-the app's own service. Keep this layer payload-agnostic.
+This is where an app's own payloads ride. **Do not add domain-specific methods
+here** — those belong in the app's own service. Keep this layer
+payload-agnostic.
+
+## Security invariants — do not weaken these
+
+This package is the protocol layer; several of its rules exist because their
+absence was exploitable. Before "simplifying" any of them, read SPEC.md.
+
+- **Every group is self-certifying.** `groupId` IS the hash of its genesis
+  payload. The old `idBinding:"legacy"` escape hatch let anyone self-sign a
+  genesis naming any groupId and validate as its owner — it is removed, and
+  must not come back. Groups predating charters stay un-chartered.
+- **`decryptManifest` is the trust boundary.** It validates (pinned
+  `expectedGroupId`, authoritative charter, roster uid↔key binding, key length)
+  and returns null; it never merely decrypts, and never throws on hostile input.
+- **A present charter is authoritative at the manifest boundary.** Tip
+  divergence from `ownerUid` is a rejection there, *not* fail-open — falling
+  open lets a member disable enforcement by claiming ownership.
+  `charterEnforcedOwner*` keeps fail-open semantics for local decisions only.
+- **Strict schema before hashing.** Exact key sets, `is int` version/timestamps
+  within JS-safe bounds, ASCII strings. This is cross-language parity, not
+  hygiene: `{"v":1.0}` equals `1` in Dart but canonicalizes differently in JS.
+- **uid↔box-key binding** is checked wherever a `(uid, publicKey)` pair is
+  accepted (`addMember`, manifest ingestion).
+- **No self-links, strictly increasing timestamps** — that is what makes chain
+  `height` a trustworthy anti-rollback epoch.
+- **`removeMember` always rotates**, even when the uid wasn't found.
+- Guards are real throws, never `assert` (stripped in release builds).
 
 ## Byte-parity: the charter
 
-`ownership_charter.dart` is mirrored by a Deno `claim-group` verifier. Canonical
-JSON bytes + SHA-256 + Ed25519 verification must agree byte-for-byte across Dart
-and Deno. `ownership_charter_test.dart` pins the shared **golden vector**; if it
-goes red, parity is broken. The three charter-minting `GroupService` methods take
-`signingKeyDomain` (from the app's `IdentityConfig`) — they never hardcode it.
+`ownership_charter.dart` is mirrored by a server-side verifier in another
+language. Canonical JSON bytes + SHA-256 + Ed25519 verification must agree
+byte-for-byte. `ownership_charter_test.dart` pins the shared **golden vector**;
+if it goes red, parity is broken. Any validation change here must be mirrored
+there in lockstep. The charter-minting `GroupService` methods take
+`signingKeyDomain` (from the app's `IdentityConfig`) — never hardcoded.
 
-## What was deliberately dropped
-
-Mylo's `Group` carried `isPaused` and `sharingMode` (location-sharing
-semantics). Those are **not** here — they belong in the app layer. Likewise the
-location/place/share-session/event encrypt wrappers were replaced by the single
-generic `encryptWithGroupKey` pair. Keep the model and service generic; resist
-re-adding app concepts.
+Known gap: the vector was generated by this implementation's own lineage, so it
+locks drift between the two verifiers rather than the format's correctness.
+Regenerating it from an independent signer (as `identity`'s vectors now are) is
+open work.
 
 ## Conventions
 
 - Models keep a clean split: `toManifestJson()` (server/peers, no local-only
   fields) vs `toJson()` (local storage, includes avatars/local labels).
-- `removeMember` **always** rotates the group key, even if the uid wasn't found.
-- Pure data + crypto only; no I/O, no network, no streams. (Realtime/transport
-  is intentionally app-local — see the Mylo extraction notes.)
+- Pure data + crypto only; no I/O, no network, no streams. Realtime/transport is
+  intentionally app-local.
+- Keep the model and service generic; resist re-adding app concepts.
 
 ## Testing
 
-`flutter test` — model serialization, full group lifecycle (create → add →
-remove+rotate → manifest DH round-trip → ownership transfer), group-key blob
-crypto, and the charter golden-vector parity anchor. `flutter analyze` clean.
-Every change gets a test.
+`flutter test` — model serialization, the full lifecycle against real libsodium
+(create → add → remove+rotate → manifest round-trip → transfer), and the
+**adversarial suite**: one case per charter rejection path plus the manifest
+boundary attacks. `flutter analyze` clean. Every change gets a test; a new
+rejection path in the validator gets a test asserting its reason code.
 
 ## Docs & commits
 
 - `SPEC.md` — the full group/manifest/charter protocol (wire formats, validation
-  rules, golden vector). `README.md` — usage.
-- **Never mention Claude, AI, or any assistant in commit messages, PR/issue
-  text, or anywhere in git history** — no `Co-Authored-By`, no "generated with"
-  trailers. Write commits as a plain human author.
+  rules, threat model, golden vector). `README.md` — usage + threat model.
 - Work on `main` (no feature branches). Commit only when explicitly asked.

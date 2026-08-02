@@ -10,7 +10,7 @@ import 'ownership_charter.dart';
 /// members (with key rotation), ownership transfer (with charter), per-member
 /// manifest crypto (DH), and group-key blob crypto.
 ///
-/// App domain payloads (vault items, locations, etc.) are encrypted with
+/// App domain payloads are encrypted with
 /// [encryptWithGroupKey] / [decryptWithGroupKey] — this layer has no knowledge
 /// of what rides inside the group key.
 ///
@@ -315,7 +315,7 @@ class GroupService {
   ///
   /// This is a generic, key-agnostic substrate primitive: it knows nothing
   /// about what the bytes mean or where the ciphertext is stored. The app
-  /// (e.g. the vault's per-item key scheme) decides those.
+  /// (e.g. a per-item key scheme) decides those.
   static String sealKeyForMember({
     required Sodium sodium,
     required GroupMember member,
@@ -345,7 +345,7 @@ class GroupService {
 
   /// Encrypt arbitrary JSON-serialisable [data] with the group's symmetric key.
   /// Returns base64(nonce || ciphertext). This is how an app encrypts its own
-  /// domain payloads (vault items, etc.) for the group.
+  /// domain payloads for the group.
   static String encryptWithGroupKey({
     required Sodium sodium,
     required Object data,

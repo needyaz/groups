@@ -136,7 +136,7 @@ void main() {
   });
 
   test('legacy / unknown role names deserialize to member (never throw)', () {
-    // A role-less Mylo manifest.
+    // A role-less (pre-roles) manifest.
     final legacy =
         GroupMember.fromJson(const {'uid': 'u', 'publicKeyB64': 'x'});
     expect(legacy.role, GroupRole.member);
