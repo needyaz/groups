@@ -59,10 +59,27 @@ code is pure Dart. If a pure-Dart (server/CLI) consumer is ever needed, split
 ## Verifying this works
 
 Anyone with a clean checkout can reproduce this — no Mylo checkout, no
-backend, no account needed.
+backend, no account needed. One extra step vs. a normal standalone repo,
+though:
 
-Prereqs: Flutter SDK (this package depends on `identity`, a path dependency
-one level up — see Layering note above, `../identity` must exist).
+> **`identity` must be cloned as a sibling directory.** `groups` depends on
+> it via a local **path** dependency (`identity: {path: ../identity}` in
+> `pubspec.yaml`), not a git/pub dependency — so `flutter pub get` fails with
+> a "Content-Length" / path-not-found error unless `../identity` (relative to
+> this repo) already exists. This is a known gap for an outside clone, not
+> yet fixed — tracked to become a git dependency later so `groups` is
+> clone-and-go standalone. For now:
+>
+> ```
+> git clone https://github.com/needyaz/identity.git
+> git clone https://github.com/needyaz/groups.git
+> # the two must be siblings on disk:
+> #   some-dir/identity/
+> #   some-dir/groups/
+> cd groups
+> ```
+
+Prereqs: Flutter SDK.
 
 ```
 flutter pub get
