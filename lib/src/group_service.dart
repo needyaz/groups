@@ -223,13 +223,12 @@ class GroupService {
     required Identity ownerIdentity,
     required Uint8List memberPublicKey,
   }) {
-    final box = deriveSharedSecret(
-        sodium, memberPublicKey, ownerIdentity.keyPair.secretKey);
-    try {
-      return encryptBlobWithBox(sodium, group.toManifestJson(), box);
-    } finally {
-      box.dispose();
-    }
+    return encryptBlobWithBoxDisposing(
+      sodium,
+      group.toManifestJson(),
+      deriveSharedSecret(
+          sodium, memberPublicKey, ownerIdentity.keyPair.secretKey),
+    );
   }
 
   /// Decrypt and VALIDATE a manifest blob using DH(mySecretKey,
@@ -249,8 +248,11 @@ class GroupService {
   ///    who simply claims ownership would otherwise switch enforcement off).
   ///    Pass [minCharterHeight] (a persisted high-water mark) to also reject a
   ///    replayed older chain.
-  ///  - the group key is 32 bytes and every roster entry's uid matches its own
-  ///    box key (see [isMemberSelfConsistent]).
+  ///  - the group key is 32 bytes. Roster entries that fail the uid↔key
+  ///    binding (see [isMemberSelfConsistent]) are DROPPED from the returned
+  ///    group rather than rejecting the whole manifest — an unbound entry is
+  ///    never trusted either way, and rejecting outright would let one corrupt
+  ///    entry block every other member's sync.
   ///
   /// A null return means "do not trust this manifest"; it never throws on
   /// malformed or hostile input.
@@ -273,9 +275,18 @@ class GroupService {
 
       if (group.groupId != expectedGroupId) return null;
       if (group.groupKey.length != 32) return null;
-      for (final m in group.members) {
-        if (!isMemberSelfConsistent(m)) return null;
-      }
+      // Drop roster entries that fail the uid↔key binding rather than
+      // rejecting the whole manifest. Dropping is both safer and more
+      // available: an unbound entry is simply never trusted (nothing is ever
+      // sealed to it), while rejecting outright would let one corrupt or
+      // schema-drifted member entry block every remaining member's sync
+      // indefinitely — the manifest is owner-authenticated, so the realistic
+      // source of a bad entry is corruption, not an attacker.
+      final vetted =
+          group.members.where(isMemberSelfConsistent).toList(growable: false);
+      final group2 = vetted.length == group.members.length
+          ? group
+          : group.copyWith(members: vetted);
       // A charter, if present, is authoritative — anything short of a full
       // match is a rejection, never a fallback to "unenforced".
       final charter = group.charter;
@@ -292,7 +303,7 @@ class GroupService {
         }
         if (!_bytesEqual(tipKey, ownerPublicKey)) return null;
       }
-      return group;
+      return group2;
     } catch (_) {
       return null;
     } finally {

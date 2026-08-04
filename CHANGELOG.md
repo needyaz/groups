@@ -1,3 +1,17 @@
+## 0.3.0
+
+- Requires `identity` 0.2.0: `Identity.seed` is now a `SecureKey`, so the
+  charter-signing derivations run against locked memory. No call-site change
+  here — `createGroup`/`transferOwnershipWithCharter` pass `identity.seed`
+  straight through.
+- `decryptManifest` now DROPS a roster entry that fails the uid↔key binding
+  instead of rejecting the whole manifest. An unbound entry is never trusted
+  either way, but rejecting outright let one corrupt or schema-drifted member
+  block every other member's sync indefinitely. (Availability parity with the
+  origin app's native invite finalizers, which already tolerated this.)
+- `encryptManifestFor` uses `encryptBlobWithBoxDisposing`, so the derived DH
+  key is wiped on the throw path too.
+
 ## 0.2.0
 
 - **Security: removed the `idBinding:"legacy"` charter binding.** It skipped

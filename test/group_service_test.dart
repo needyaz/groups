@@ -200,6 +200,45 @@ void main() {
       );
     });
 
+    test('drops an unbound roster entry instead of rejecting the manifest', () {
+      // A corrupt/schema-drifted member entry must not block every other
+      // member's sync — the entry is dropped (and so never trusted), the rest
+      // of the manifest is accepted.
+      final owner = generateIdentity(sodium);
+      final member = generateIdentity(sodium);
+      final mallory = generateIdentity(sodium);
+      var g = GroupService.createGroup(
+          sodium: sodium,
+          name: 'G',
+          identity: owner,
+          signingKeyDomain: signingDomain);
+      g = GroupService.addMember(g, memberFor(member));
+      // Bypass addMember's guard the way a hostile/corrupt manifest would.
+      final spoofed = GroupMember(
+        uid: 'a' * 32,
+        publicKeyB64: base64.encode(mallory.keyPair.publicKey),
+      );
+      final tainted = g.copyWith(members: [...g.members, spoofed]);
+
+      final blob = GroupService.encryptManifestFor(
+        sodium: sodium,
+        group: tainted,
+        ownerIdentity: owner,
+        memberPublicKey: member.keyPair.publicKey,
+      );
+      final decoded = GroupService.decryptManifest(
+        sodium: sodium,
+        blob: blob,
+        myIdentity: member,
+        ownerPublicKey: owner.keyPair.publicKey,
+        expectedGroupId: g.groupId,
+      );
+      expect(decoded, isNotNull);
+      expect(decoded!.memberByUid('a' * 32), isNull, reason: 'dropped');
+      expect(decoded.members.map((m) => m.uid),
+          containsAll(<String>[owner.uid, member.uid]));
+    });
+
     test('rejects a usurped manifest not signed by the charter owner', () {
       // Mallory is a member, so she holds the roster and the group key. She
       // republishes the manifest with herself as ownerUid, keeping the real
