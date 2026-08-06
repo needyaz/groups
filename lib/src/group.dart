@@ -61,6 +61,17 @@ class GroupMember {
   /// serialize byte-for-byte as before (see [toManifestJson]).
   final GroupRole role;
 
+  /// Opaque unknown-field passthrough, LOCAL-ONLY. [fromJson] captures any key
+  /// it doesn't recognize here; [toJson] re-emits them verbatim so an adopter's
+  /// app-specific per-member fields (e.g. a local alert threshold) survive a
+  /// round-trip through this model without the package knowing what they mean.
+  ///
+  /// Never emitted by [toManifestJson]: a member entry's unrecognized keys must
+  /// not silently ride the wire. To drop a key, [copyWith] with a map that
+  /// omits it. An empty map serializes to nothing — output is byte-identical to
+  /// a pre-passthrough client.
+  final Map<String, Object?> extra;
+
   const GroupMember({
     required this.uid,
     required this.publicKeyB64,
@@ -71,6 +82,7 @@ class GroupMember {
     this.avatarPhotoPath,
     this.avatarPlain = false,
     this.role = GroupRole.member,
+    this.extra = const {},
   });
 
   Uint8List get publicKey => Uint8List.fromList(base64.decode(publicKeyB64));
@@ -110,14 +122,40 @@ class GroupMember {
         if (role != GroupRole.member) 'role': role.name,
       };
 
-  /// For local on-device storage — includes local-only fields.
-  Map<String, dynamic> toJson() => {
-        ...toManifestJson(),
-        if (localDisplayName != null) 'localDisplayName': localDisplayName,
-        if (avatarEmoji != null) 'avatarEmoji': avatarEmoji,
-        if (avatarPhotoPath != null) 'avatarPhotoPath': avatarPhotoPath,
-        if (avatarPlain) 'avatarPlain': true,
-      };
+  /// For local on-device storage — includes local-only fields and the [extra]
+  /// passthrough. Recognized keys always win: an [extra] entry can never shadow
+  /// a real field (only reachable via constructor misuse — [fromJson] never
+  /// captures recognized keys — but this model feeds the trust boundary, so
+  /// the guard is unconditional).
+  Map<String, dynamic> toJson() {
+    final j = <String, dynamic>{
+      ...toManifestJson(),
+      if (localDisplayName != null) 'localDisplayName': localDisplayName,
+      if (avatarEmoji != null) 'avatarEmoji': avatarEmoji,
+      if (avatarPhotoPath != null) 'avatarPhotoPath': avatarPhotoPath,
+      if (avatarPlain) 'avatarPlain': true,
+    };
+    for (final e in extra.entries) {
+      if (!_knownKeys.contains(e.key)) j.putIfAbsent(e.key, () => e.value);
+    }
+    return j;
+  }
+
+  /// Every key [fromJson] consumes into a real field. `'emoji'` is the legacy
+  /// pre-rename spelling of `avatarEmoji` (see [fromJson]) — consumed, so it
+  /// migrates rather than lingering in [extra].
+  static const _knownKeys = {
+    'uid',
+    'publicKeyB64',
+    'edPubKeyB64',
+    'displayName',
+    'localDisplayName',
+    'avatarEmoji',
+    'emoji',
+    'avatarPhotoPath',
+    'avatarPlain',
+    'role',
+  };
 
   factory GroupMember.fromJson(Map<String, dynamic> j) => GroupMember(
         uid: j['uid'] as String,
@@ -125,20 +163,36 @@ class GroupMember {
         edPubKeyB64: j['edPubKeyB64'] as String?,
         displayName: j['displayName'] as String?,
         localDisplayName: j['localDisplayName'] as String?,
-        avatarEmoji: j['avatarEmoji'] as String?,
+        // `'emoji'` is a backward-compat read for local JSON written before the
+        // `avatarEmoji` rename; nothing writes it anymore, so the next toJson()
+        // migrates it forward.
+        avatarEmoji: j['avatarEmoji'] as String? ?? j['emoji'] as String?,
         avatarPhotoPath: j['avatarPhotoPath'] as String?,
         avatarPlain: j['avatarPlain'] as bool? ?? false,
         role: _roleFromName(j['role'] as String?),
+        extra: {
+          for (final e in j.entries)
+            if (!_knownKeys.contains(e.key)) e.key: e.value,
+        },
       );
 
+  /// [clearAvatarPhotoPath] resets the local photo override back to null —
+  /// the `?? this` idiom can never do that, and a dangling override path (the
+  /// file's container moved across an app update) must be droppable so the
+  /// member falls back to their received photo.
+  ///
+  /// [extra] REPLACES the whole passthrough map when provided; pass a map
+  /// omitting a key to clear that key.
   GroupMember copyWith({
     String? edPubKeyB64,
     String? displayName,
     String? localDisplayName,
     String? avatarEmoji,
     String? avatarPhotoPath,
+    bool clearAvatarPhotoPath = false,
     bool? avatarPlain,
     GroupRole? role,
+    Map<String, Object?>? extra,
   }) =>
       GroupMember(
         uid: uid,
@@ -147,9 +201,12 @@ class GroupMember {
         displayName: displayName ?? this.displayName,
         localDisplayName: localDisplayName ?? this.localDisplayName,
         avatarEmoji: avatarEmoji ?? this.avatarEmoji,
-        avatarPhotoPath: avatarPhotoPath ?? this.avatarPhotoPath,
+        avatarPhotoPath: clearAvatarPhotoPath
+            ? null
+            : (avatarPhotoPath ?? this.avatarPhotoPath),
         avatarPlain: avatarPlain ?? this.avatarPlain,
         role: role ?? this.role,
+        extra: extra ?? this.extra,
       );
 }
 
@@ -176,6 +233,21 @@ class Group {
   /// (`[{payload, sig}, …]`).
   final List<Object?>? charter;
 
+  /// Opaque unknown-field passthrough, WIRE-VISIBLE. [fromJson] captures any
+  /// key it doesn't recognize here; [toManifestJson] (and therefore [toJson])
+  /// re-emits them verbatim, so an adopter's app-specific manifest fields
+  /// (e.g. a group-level sharing mode) survive a republish through this model
+  /// without the package knowing what they mean.
+  ///
+  /// Because these keys ride the encrypted manifest to every member, do NOT
+  /// put local-only or device-private data here — that belongs in the app's
+  /// own storage (or, per-member, in [GroupMember.extra], which is local-only).
+  /// To drop a key, [copyWith] with a map that omits it. An empty map
+  /// serializes to nothing — output is byte-identical to a pre-passthrough
+  /// client, so adopters that never set it (and their peers) see no wire
+  /// change.
+  final Map<String, Object?> extra;
+
   const Group({
     required this.groupId,
     required this.name,
@@ -185,12 +257,16 @@ class Group {
     required this.createdAt,
     this.manifestUpdatedAt = 0,
     this.charter,
+    this.extra = const {},
   });
 
   /// [clearCharter] drops the charter instead of inheriting it — without it a
   /// stale charter can never be removed (`charter ?? this.charter` always
   /// resurrects it), which matters when a group's ownership has diverged from
   /// its chain and the caller wants to stop presenting an unenforceable chain.
+  ///
+  /// [extra] REPLACES the whole passthrough map when provided; pass a map
+  /// omitting a key to clear that key.
   Group copyWith({
     String? name,
     String? ownerUid,
@@ -199,6 +275,7 @@ class Group {
     int? manifestUpdatedAt,
     List<Object?>? charter,
     bool clearCharter = false,
+    Map<String, Object?>? extra,
   }) =>
       Group(
         groupId: groupId,
@@ -209,6 +286,7 @@ class Group {
         createdAt: createdAt,
         manifestUpdatedAt: manifestUpdatedAt ?? this.manifestUpdatedAt,
         charter: clearCharter ? null : (charter ?? this.charter),
+        extra: extra ?? this.extra,
       );
 
   GroupMember? memberByUid(String uid) {
@@ -236,16 +314,26 @@ class Group {
   List<GroupMember> get fullAccessMembers =>
       members.where((m) => isOwner(m.uid) || m.isCoOwner).toList();
 
-  /// For the server: excludes local-only fields; uses toManifestJson for members.
-  Map<String, dynamic> toManifestJson() => {
-        'groupId': groupId,
-        'name': name,
-        'ownerUid': ownerUid,
-        'members': members.map((m) => m.toManifestJson()).toList(),
-        'groupKey': base64.encode(groupKey),
-        'createdAt': createdAt,
-        if (charter != null) 'charter': charter,
-      };
+  /// For the server: excludes local-only fields; uses toManifestJson for
+  /// members; appends the [extra] passthrough. Recognized keys always win: an
+  /// [extra] entry can never shadow a real field (only reachable via
+  /// constructor misuse — [fromJson] never captures recognized keys — but this
+  /// model feeds the trust boundary, so the guard is unconditional).
+  Map<String, dynamic> toManifestJson() {
+    final j = <String, dynamic>{
+      'groupId': groupId,
+      'name': name,
+      'ownerUid': ownerUid,
+      'members': members.map((m) => m.toManifestJson()).toList(),
+      'groupKey': base64.encode(groupKey),
+      'createdAt': createdAt,
+      if (charter != null) 'charter': charter,
+    };
+    for (final e in extra.entries) {
+      if (!_knownKeys.contains(e.key)) j.putIfAbsent(e.key, () => e.value);
+    }
+    return j;
+  }
 
   /// For local storage: manifest fields + local-only fields.
   Map<String, dynamic> toJson() => {
@@ -254,6 +342,18 @@ class Group {
         'members': members.map((m) => m.toJson()).toList(),
         if (manifestUpdatedAt > 0) 'manifestUpdatedAt': manifestUpdatedAt,
       };
+
+  /// Every key [fromJson] consumes into a real field.
+  static const _knownKeys = {
+    'groupId',
+    'name',
+    'ownerUid',
+    'members',
+    'groupKey',
+    'createdAt',
+    'manifestUpdatedAt',
+    'charter',
+  };
 
   factory Group.fromJson(Map<String, dynamic> j) {
     final rawCharter = j['charter'];
@@ -268,6 +368,10 @@ class Group {
       createdAt: _asInt(j['createdAt'])!,
       manifestUpdatedAt: _asInt(j['manifestUpdatedAt']) ?? 0,
       charter: rawCharter is List ? rawCharter.cast<Object?>() : null,
+      extra: {
+        for (final e in j.entries)
+          if (!_knownKeys.contains(e.key)) e.key: e.value,
+      },
     );
   }
 

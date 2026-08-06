@@ -1,3 +1,32 @@
+## 0.4.0
+
+Adopter-portability release (unblocks the Mylo `GroupService`/`Group` swap).
+All additive; defaults are byte- and behavior-identical to 0.3.0, so existing
+consumers see no change.
+
+- **Unknown-field passthrough**: `Group.extra` (wire-visible — re-emitted by
+  `toManifestJson()`, so a package-based republish can't silently drop an
+  adopter's manifest field) and `GroupMember.extra` (local-only — re-emitted by
+  `toJson()` only, never published). Captured by `fromJson`; recognized keys
+  can never be shadowed or fabricated by the bag; an empty bag serializes to
+  nothing. Both `copyWith`s take `extra:` (replaces the bag; omit a key to
+  clear it).
+- **`CharterPolicy` on `decryptManifest`** (default `strict` — today's exact
+  behavior). Opt-in `tolerant` treats a charter-authority failure exactly as
+  `charter == null` (fall back to trusting the caller-supplied
+  `ownerPublicKey`) while keeping the groupId pin, key-length check, and
+  roster uid↔key vetting fully strict. For adopters with legacy/diverged
+  charters still draining out of their fleet; the usurpation tradeoff is
+  pinned in the adversarial suite as documented behavior. See SPEC.md.
+- **`GroupMember.copyWith(clearAvatarPhotoPath: true)`** — resets the local
+  photo override to null (the `?? this` idiom can't), mirroring the existing
+  `clearCharter`.
+- **Legacy `'emoji'` key fallback** in `GroupMember.fromJson` — read into
+  `avatarEmoji` (which wins when both are present), consumed rather than
+  passed through, and migrated to `avatarEmoji` on the next write. For
+  on-device JSON written before the rename.
+- Requires `identity` 0.3.0 (`IdentityStore.clear()` failure surfacing).
+
 ## 0.3.0
 
 - Requires `identity` 0.2.0: `Identity.seed` is now a `SecureKey`, so the

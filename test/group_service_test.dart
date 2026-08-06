@@ -316,6 +316,161 @@ void main() {
       );
     });
 
+    test('tolerant policy: accepts a diverged charter that strict rejects, '
+        'treating it exactly as uncharted', () {
+      // The live scenario tolerant exists for: an uncharted ownership
+      // transfer left ownerUid permanently diverged from the charter tip.
+      // Under strict the group can never sync again; under tolerant it syncs
+      // with charter enforcement off — the adopter's accepted downgrade.
+      final owner = generateIdentity(sodium);
+      final newOwner = generateIdentity(sodium);
+      final member = generateIdentity(sodium);
+      var g = GroupService.createGroup(
+          sodium: sodium,
+          name: 'G',
+          identity: owner,
+          signingKeyDomain: signingDomain);
+      g = GroupService.addMember(g, memberFor(newOwner)); // ed key unknown
+      g = GroupService.addMember(g, memberFor(member));
+      g = GroupService.transferOwnershipWithCharter(
+        sodium: sodium,
+        group: g,
+        currentOwner: owner,
+        newOwnerUid: newOwner.uid,
+        signingKeyDomain: signingDomain,
+        allowUnchartedFallback: true,
+      );
+      final blob = GroupService.encryptManifestFor(
+        sodium: sodium,
+        group: g,
+        ownerIdentity: newOwner,
+        memberPublicKey: member.keyPair.publicKey,
+      );
+      Group? decrypt(CharterPolicy policy) => GroupService.decryptManifest(
+            sodium: sodium,
+            blob: blob,
+            myIdentity: member,
+            ownerPublicKey: newOwner.keyPair.publicKey,
+            expectedGroupId: g.groupId,
+            charterPolicy: policy,
+          );
+      expect(decrypt(CharterPolicy.strict), isNull,
+          reason: 'default posture unchanged');
+      final tolerated = decrypt(CharterPolicy.tolerant);
+      expect(tolerated, isNotNull);
+      expect(tolerated!.ownerUid, newOwner.uid);
+    });
+
+    test('tolerant policy relaxes ONLY charter authority — the groupId pin '
+        'and roster vetting stay strict', () {
+      final owner = generateIdentity(sodium);
+      final member = generateIdentity(sodium);
+      final mallory = generateIdentity(sodium);
+      var g = GroupService.createGroup(
+          sodium: sodium,
+          name: 'G',
+          identity: owner,
+          signingKeyDomain: signingDomain);
+      g = GroupService.addMember(g, memberFor(member));
+      final spoofed = GroupMember(
+        uid: 'a' * 32,
+        publicKeyB64: base64.encode(mallory.keyPair.publicKey),
+      );
+      final tainted = g.copyWith(members: [...g.members, spoofed]);
+      final blob = GroupService.encryptManifestFor(
+        sodium: sodium,
+        group: tainted,
+        ownerIdentity: owner,
+        memberPublicKey: member.keyPair.publicKey,
+      );
+      // Wrong pinned groupId: rejected under tolerant too.
+      expect(
+        GroupService.decryptManifest(
+          sodium: sodium,
+          blob: blob,
+          myIdentity: member,
+          ownerPublicKey: owner.keyPair.publicKey,
+          expectedGroupId: 'not-this-group',
+          charterPolicy: CharterPolicy.tolerant,
+        ),
+        isNull,
+      );
+      // Unbound roster entry: still dropped under tolerant.
+      final decoded = GroupService.decryptManifest(
+        sodium: sodium,
+        blob: blob,
+        myIdentity: member,
+        ownerPublicKey: owner.keyPair.publicKey,
+        expectedGroupId: g.groupId,
+        charterPolicy: CharterPolicy.tolerant,
+      );
+      expect(decoded, isNotNull);
+      expect(decoded!.memberByUid('a' * 32), isNull);
+    });
+
+    test('tolerant policy DOCUMENTED TRADEOFF: a usurped manifest is accepted '
+        'when the victim already trusts the usurper\'s key', () {
+      // This is the exact hole strict exists to close (see the strict-mode
+      // usurpation test above). Under tolerant it is a deliberate, accepted
+      // product tradeoff — trust reduces to the caller-supplied
+      // ownerPublicKey, as for an uncharted group. Pinned here so the
+      // behavior is documented, not accidental.
+      final owner = generateIdentity(sodium);
+      final mallory = generateIdentity(sodium);
+      final victim = generateIdentity(sodium);
+      var g = GroupService.createGroup(
+          sodium: sodium,
+          name: 'G',
+          identity: owner,
+          signingKeyDomain: signingDomain);
+      g = GroupService.addMember(g, memberFor(mallory));
+      g = GroupService.addMember(g, memberFor(victim));
+      final usurped = g.copyWith(ownerUid: mallory.uid);
+      final blob = GroupService.encryptManifestFor(
+        sodium: sodium,
+        group: usurped,
+        ownerIdentity: mallory,
+        memberPublicKey: victim.keyPair.publicKey,
+      );
+      final decoded = GroupService.decryptManifest(
+        sodium: sodium,
+        blob: blob,
+        myIdentity: victim,
+        ownerPublicKey: mallory.keyPair.publicKey,
+        expectedGroupId: g.groupId,
+        charterPolicy: CharterPolicy.tolerant,
+      );
+      expect(decoded, isNotNull);
+      expect(decoded!.ownerUid, mallory.uid);
+    });
+
+    test('an adopter wire field (Group.extra) survives the manifest '
+        'round-trip', () {
+      final owner = generateIdentity(sodium);
+      final member = generateIdentity(sodium);
+      var g = GroupService.createGroup(
+          sodium: sodium,
+          name: 'G',
+          identity: owner,
+          signingKeyDomain: signingDomain);
+      g = GroupService.addMember(g, memberFor(member));
+      g = g.copyWith(extra: {'sharingMode': 'onRequest'});
+      final blob = GroupService.encryptManifestFor(
+        sodium: sodium,
+        group: g,
+        ownerIdentity: owner,
+        memberPublicKey: member.keyPair.publicKey,
+      );
+      final decoded = GroupService.decryptManifest(
+        sodium: sodium,
+        blob: blob,
+        myIdentity: member,
+        ownerPublicKey: owner.keyPair.publicKey,
+        expectedGroupId: g.groupId,
+      );
+      expect(decoded!.extra, {'sharingMode': 'onRequest'});
+    });
+
     test('returns null (never throws) on tampered, truncated, or garbage blobs',
         () {
       final owner = generateIdentity(sodium);

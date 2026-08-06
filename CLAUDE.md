@@ -45,6 +45,11 @@ absence was exploitable. Before "simplifying" any of them, read SPEC.md.
   divergence from `ownerUid` is a rejection there, *not* fail-open — falling
   open lets a member disable enforcement by claiming ownership.
   `charterEnforcedOwner*` keeps fail-open semantics for local decisions only.
+  `decryptManifest`'s opt-in `CharterPolicy.tolerant` is the one sanctioned
+  exception (for adopters with legacy/diverged charters still in the fleet —
+  see SPEC.md); `strict` is the default and must stay the default, and
+  `tolerant` relaxes charter authority ONLY — never the groupId pin, key
+  length, or roster binding.
 - **Strict schema before hashing.** Exact key sets, `is int` version/timestamps
   within JS-safe bounds, ASCII strings. This is cross-language parity, not
   hygiene: `{"v":1.0}` equals `1` in Dart but canonicalizes differently in JS.

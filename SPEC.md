@@ -17,6 +17,24 @@ Two JSON shapes:
   base64; includes `charter`.
 - `toJson()` — local storage. Manifest fields + local-only fields.
 
+**Unknown-field passthrough (`extra`)**: `fromJson` captures any key it does not
+recognize into an opaque `extra` map, so an adopter's app-specific fields
+survive a round-trip through these models without the package knowing what they
+mean. The two models re-emit deliberately differently:
+
+- `Group.extra` is **wire-visible** — re-emitted by `toManifestJson()` (a
+  package-based republish must not silently drop an adopter's manifest field,
+  e.g. a group-level sharing mode; dropping one can silently revert a member's
+  chosen privacy posture fleet-wide). Never put local-only data here.
+- `GroupMember.extra` is **local-only** — re-emitted by `toJson()` only, never
+  by `toManifestJson()`; unrecognized per-member keys must not silently ride
+  the wire.
+
+An `extra` entry can never shadow or fabricate a recognized key (recognized
+keys always win at serialization, and `fromJson` never captures them), and an
+empty map serializes to nothing — output is byte-identical to a
+pre-passthrough client.
+
 ## Group key
 
 32 random bytes. Encrypts everything an app shares in the group. **Rotated on
@@ -48,6 +66,20 @@ anything short of a full match is a rejection. (This is deliberately stricter
 than `charterEnforcedOwner`, which fails open on tip divergence for local
 enforcement decisions — at the manifest boundary that fail-open would let a
 member switch enforcement off simply by claiming ownership.)
+
+**`charterPolicy`** (default `CharterPolicy.strict`): `strict` is the behavior
+above. `tolerant` is an explicit, opt-in escape hatch for adopters whose fleet
+contains groups whose charters legitimately cannot validate (legacy
+un-hash-bound charters still draining out; an uncharted ownership transfer's
+permanently diverged tip) and for whom a hard rejection means those groups
+never sync again. Under `tolerant`, a charter-authority failure is treated
+exactly as `charter == null` — trust falls back to the caller-supplied
+`ownerPublicKey` — while every other check in the table (groupId pin, key
+length, roster binding) stays fully strict. This knowingly re-opens the
+usurpation hole for affected groups (the adversarial suite pins that tradeoff
+as documented behavior); it is transitional, and adopters should return to
+`strict` once such groups are gone. Adopters whose every group is chartered
+(e.g. vault) must stay on the default.
 
 ## Roster binding
 

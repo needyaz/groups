@@ -51,7 +51,10 @@ of the trade-offs coherent.
   apply at the manifest boundary: when an incoming manifest carries a charter,
   it is authoritative and anything short of a full match is rejected, because
   there "fall open" would let a member disable enforcement by simply claiming
-  ownership.
+  ownership. (`decryptManifest`'s opt-in `CharterPolicy.tolerant` extends the
+  local fail-open posture to the boundary for adopters whose fleet still
+  carries legacy/diverged charters — a documented, transitional downgrade;
+  the default stays strict. See SPEC.md.)
 
 ### What it does not provide
 

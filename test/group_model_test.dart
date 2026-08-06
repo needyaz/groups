@@ -111,6 +111,106 @@ void main() {
     expect(firstMember.containsKey('localDisplayName'), isFalse);
   });
 
+  // ---- Unknown-field passthrough (`extra`) ---------------------------------
+
+  test('Group captures unknown manifest keys and re-emits them on the wire',
+      () {
+    final g = Group(
+      groupId: 'g1',
+      name: 'Fam',
+      ownerUid: 'u1',
+      members: const [GroupMember(uid: 'u1', publicKeyB64: 'cHVi')],
+      groupKey: Uint8List(32),
+      createdAt: 1,
+    );
+    final wire = g.toManifestJson()..['sharingMode'] = 'onRequest';
+    final parsed = Group.fromJson(wire);
+    expect(parsed.extra, {'sharingMode': 'onRequest'});
+    // Republish keeps the key — the regression this exists to prevent is a
+    // package-based republish silently dropping an adopter's wire field.
+    expect(parsed.toManifestJson()['sharingMode'], 'onRequest');
+    expect(parsed.toJson()['sharingMode'], 'onRequest');
+    // Recognized keys are never captured into extra.
+    expect(parsed.extra.containsKey('groupId'), isFalse);
+    // And a full round-trip is stable.
+    expect(Group.fromJson(parsed.toManifestJson()).extra,
+        {'sharingMode': 'onRequest'});
+  });
+
+  test('Group.extra can never shadow a recognized field', () {
+    final g = Group(
+      groupId: 'real',
+      name: 'Fam',
+      ownerUid: 'u1',
+      members: const [],
+      groupKey: Uint8List(32),
+      createdAt: 1,
+      extra: const {'groupId': 'evil', 'charter': 'evil', 'x': 1},
+    );
+    final wire = g.toManifestJson();
+    expect(wire['groupId'], 'real');
+    expect(wire.containsKey('charter'), isFalse,
+        reason: 'extra must not fabricate an absent recognized key either');
+    expect(wire['x'], 1);
+  });
+
+  test('GroupMember passthrough is LOCAL-ONLY: survives toJson, never rides '
+      'the manifest', () {
+    final local = const GroupMember(uid: 'u', publicKeyB64: 'x')
+        .toJson()
+      ..['livenessAlertMinutes'] = 45;
+    final parsed = GroupMember.fromJson(local);
+    expect(parsed.extra, {'livenessAlertMinutes': 45});
+    expect(parsed.toJson()['livenessAlertMinutes'], 45);
+    expect(parsed.toManifestJson().containsKey('livenessAlertMinutes'), isFalse);
+  });
+
+  test('copyWith(extra:) replaces the bag — omitting a key clears it', () {
+    const m = GroupMember(
+        uid: 'u', publicKeyB64: 'x', extra: {'a': 1, 'b': 2});
+    expect(m.copyWith(displayName: 'D').extra, {'a': 1, 'b': 2},
+        reason: 'unrelated copyWith carries the bag through');
+    expect(m.copyWith(extra: {'a': 1}).extra, {'a': 1});
+    expect(m.copyWith(extra: {}).extra, isEmpty);
+    final g = Group(
+      groupId: 'g',
+      name: 'n',
+      ownerUid: 'u',
+      members: const [],
+      groupKey: Uint8List(32),
+      createdAt: 1,
+      extra: const {'sharingMode': 'onRequest'},
+    );
+    expect(g.copyWith(name: 'n2').extra, {'sharingMode': 'onRequest'});
+    expect(g.copyWith(extra: {}).toManifestJson().containsKey('sharingMode'),
+        isFalse);
+  });
+
+  test('clearAvatarPhotoPath resets the override; plain copyWith cannot', () {
+    const m =
+        GroupMember(uid: 'u', publicKeyB64: 'x', avatarPhotoPath: '/o.png');
+    expect(m.copyWith(displayName: 'D').avatarPhotoPath, '/o.png');
+    expect(m.copyWith(clearAvatarPhotoPath: true).avatarPhotoPath, isNull);
+  });
+
+  test('legacy emoji key: read into avatarEmoji, migrated on next write', () {
+    final legacy = GroupMember.fromJson(
+        const {'uid': 'u', 'publicKeyB64': 'x', 'emoji': '🦊'});
+    expect(legacy.avatarEmoji, '🦊');
+    expect(legacy.extra, isEmpty, reason: 'consumed, not passed through');
+    final rewritten = legacy.toJson();
+    expect(rewritten['avatarEmoji'], '🦊');
+    expect(rewritten.containsKey('emoji'), isFalse);
+    // The renamed key wins when both are present.
+    final both = GroupMember.fromJson(const {
+      'uid': 'u',
+      'publicKeyB64': 'x',
+      'avatarEmoji': '😀',
+      'emoji': '🦊',
+    });
+    expect(both.avatarEmoji, '😀');
+  });
+
   // ---- Roles ---------------------------------------------------------------
 
   test('role defaults to member and is omitted from a role-less manifest', () {

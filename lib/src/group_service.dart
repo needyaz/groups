@@ -6,6 +6,33 @@ import 'package:identity/identity.dart';
 import 'group.dart';
 import 'ownership_charter.dart';
 
+/// How [GroupService.decryptManifest] treats a manifest whose charter fails
+/// validation.
+enum CharterPolicy {
+  /// A present charter is AUTHORITATIVE: any validation failure — an invalid
+  /// chain, a tip uid diverged from `ownerUid`, a tip box key that isn't the
+  /// sending owner's, a chain below `minCharterHeight` — rejects the manifest.
+  /// This is the default and the right posture when every group is created
+  /// with a charter: a broken or missing one there signals a lying server.
+  strict,
+
+  /// Fail-open: on any charter validation failure, proceed exactly as if the
+  /// manifest carried no charter — trust falls back to the caller-supplied
+  /// `ownerPublicKey`. Every OTHER check (`expectedGroupId` pin, 32-byte group
+  /// key, roster uid↔key vetting) stays fully strict.
+  ///
+  /// This deliberately re-opens the usurpation hole that [strict] closes: a
+  /// manifest whose `ownerUid` was changed without extending the charter is
+  /// ACCEPTED, trusting whichever key the caller already believes is the
+  /// owner's. Choose it only when the fleet still contains groups whose
+  /// charters legitimately cannot validate (legacy un-hash-bound charters
+  /// draining out; an uncharted ownership transfer's permanently diverged
+  /// tip) and a hard rejection would mean those groups never sync again.
+  /// Callers should treat it as transitional and return to [strict] once
+  /// those groups are gone.
+  tolerant,
+}
+
 /// Generic end-to-end-encrypted group membership operations: create, add/remove
 /// members (with key rotation), ownership transfer (with charter), per-member
 /// manifest crypto (DH), and group-key blob crypto.
@@ -240,14 +267,16 @@ class GroupService {
   ///    peer whose DH key you legitimately hold can hand you a manifest naming
   ///    a DIFFERENT group, and a caller upserting by the returned groupId
   ///    replaces its view of that other group.
-  ///  - when a charter is present it is AUTHORITATIVE: it must validate for
-  ///    that groupId, its tip uid must equal the manifest's `ownerUid`, and
-  ///    [ownerPublicKey] must be the tip's box key. Note this is deliberately
-  ///    stricter than [charterEnforcedOwner], which fails open when the tip has
-  ///    diverged from `ownerUid` — here that divergence IS the attack (a member
-  ///    who simply claims ownership would otherwise switch enforcement off).
+  ///  - when a charter is present it is AUTHORITATIVE (under the default
+  ///    [CharterPolicy.strict]): it must validate for that groupId, its tip uid
+  ///    must equal the manifest's `ownerUid`, and [ownerPublicKey] must be the
+  ///    tip's box key. Note this is deliberately stricter than
+  ///    [charterEnforcedOwner], which fails open when the tip has diverged from
+  ///    `ownerUid` — here that divergence IS the attack (a member who simply
+  ///    claims ownership would otherwise switch enforcement off).
   ///    Pass [minCharterHeight] (a persisted high-water mark) to also reject a
-  ///    replayed older chain.
+  ///    replayed older chain. [CharterPolicy.tolerant] relaxes ONLY this
+  ///    charter authority — see [CharterPolicy] for what that trades away.
   ///  - the group key is 32 bytes. Roster entries that fail the uid↔key
   ///    binding (see [isMemberSelfConsistent]) are DROPPED from the returned
   ///    group rather than rejecting the whole manifest — an unbound entry is
@@ -263,6 +292,7 @@ class GroupService {
     required Uint8List ownerPublicKey,
     required String expectedGroupId,
     int minCharterHeight = 0,
+    CharterPolicy charterPolicy = CharterPolicy.strict,
   }) {
     PrecalculatedBox? box;
     try {
@@ -287,21 +317,22 @@ class GroupService {
       final group2 = vetted.length == group.members.length
           ? group
           : group.copyWith(members: vetted);
-      // A charter, if present, is authoritative — anything short of a full
-      // match is a rejection, never a fallback to "unenforced".
+      // A charter, if present, is authoritative under strict — anything short
+      // of a full match is a rejection, never a fallback to "unenforced".
+      // Under tolerant, a failure means "proceed as if charter == null": the
+      // charter contributes no trust either way (the carried chain is data,
+      // not proof), and the caller's ownerPublicKey is what's trusted.
       final charter = group.charter;
-      if (charter != null) {
-        final result = validateCharter(sodium, charter, group.groupId);
-        if (!result.valid || result.owner == null) return null;
-        if (result.height < minCharterHeight) return null;
-        if (result.owner!.uid != group.ownerUid) return null;
-        final Uint8List tipKey;
-        try {
-          tipKey = base64.decode(result.owner!.boxPubKeyB64);
-        } catch (_) {
-          return null;
-        }
-        if (!_bytesEqual(tipKey, ownerPublicKey)) return null;
+      if (charter != null &&
+          !_charterAuthorizes(
+            sodium: sodium,
+            charter: charter,
+            group: group,
+            ownerPublicKey: ownerPublicKey,
+            minCharterHeight: minCharterHeight,
+          ) &&
+          charterPolicy == CharterPolicy.strict) {
+        return null;
       }
       return group2;
     } catch (_) {
@@ -309,6 +340,30 @@ class GroupService {
     } finally {
       box?.dispose();
     }
+  }
+
+  /// The full charter-authority check [decryptManifest] applies to a present
+  /// charter: the chain validates for the group's id, meets the caller's
+  /// height high-water mark, and its tip names exactly the manifest's
+  /// `ownerUid` and the sending owner's box key.
+  static bool _charterAuthorizes({
+    required Sodium sodium,
+    required List<Object?> charter,
+    required Group group,
+    required Uint8List ownerPublicKey,
+    required int minCharterHeight,
+  }) {
+    final result = validateCharter(sodium, charter, group.groupId);
+    if (!result.valid || result.owner == null) return false;
+    if (result.height < minCharterHeight) return false;
+    if (result.owner!.uid != group.ownerUid) return false;
+    final Uint8List tipKey;
+    try {
+      tipKey = base64.decode(result.owner!.boxPubKeyB64);
+    } catch (_) {
+      return false;
+    }
+    return _bytesEqual(tipKey, ownerPublicKey);
   }
 
   static bool _bytesEqual(Uint8List a, Uint8List b) {
