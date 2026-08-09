@@ -249,9 +249,21 @@ Stated plainly rather than left for a reader to find:
 
 ## License
 
-MIT — see [LICENSE](LICENSE). No third-party code is vendored into this repo.
+MIT — see [LICENSE](LICENSE). No third-party code is vendored into this repo;
+everything below is consumed as an unmodified dependency.
 
-This package's only dependency is [`identity`](../identity) (MIT), which in turn
-brings libsodium (ISC) and its Dart bindings plus BSD-3-Clause Dart packages —
-see that repo's License section for the full table and the notice obligations
-that apply when redistributing built apps.
+Third-party licenses (relevant when redistributing built apps, since their
+binaries embed these — preserve the upstream notices):
+
+| Dependency | Used by | License |
+|---|---|---|
+| [`identity`](../identity) | foundation: identity, key derivation, crypto primitives | MIT |
+| [libsodium](https://github.com/jedisct1/libsodium) | all crypto (via `sodium`) | ISC |
+| [`sodium`](https://pub.dev/packages/sodium) (Dart bindings) | libsodium types + group-key generation | BSD-3-Clause |
+| [`crypto`](https://pub.dev/packages/crypto) | SHA-256 for charter hashing | BSD-3-Clause |
+| [`bip39`](https://pub.dev/packages/bip39), [`flutter_secure_storage`](https://pub.dev/packages/flutter_secure_storage) | transitive via `identity` | BSD-3-Clause |
+
+`identity`'s optional native crypto mirrors (`native/ios/`, `native/android/`)
+carry additional notices (swift-sodium ISC, lazysodium-android MPL-2.0 as a
+`libsodium.so` delivery vehicle only, Gradle wrapper Apache-2.0) — see that
+repo's License section; they apply only to apps that ship those mirrors.
