@@ -1,7 +1,8 @@
 # groups — specification
 
 The end-to-end-encrypted group-membership protocol. Builds on
-[`identity`](../identity); depends on its primitives + byte-parity rules.
+[`identity`](https://github.com/needyaz/identity); depends on its primitives +
+byte-parity rules.
 
 ## Data model
 
@@ -79,7 +80,7 @@ length, roster binding) stays fully strict. This knowingly re-opens the
 usurpation hole for affected groups (the adversarial suite pins that tradeoff
 as documented behavior); it is transitional, and adopters should return to
 `strict` once such groups are gone. Adopters whose every group is chartered
-(e.g. vault) must stay on the default.
+must stay on the default.
 
 ## Roster binding
 

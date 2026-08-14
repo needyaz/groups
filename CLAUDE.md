@@ -11,7 +11,7 @@ manifest DH crypto, and group-key blob crypto), and the signed **ownership
 charter** (genesis + transfer links + validator).
 
 Extracted from a shipped production app; the crypto is byte-identical to that
-source. It depends on [`identity`](../identity) and has **no domain coupling** —
+source. It depends on [`identity`](https://github.com/needyaz/identity) and has **no domain coupling** —
 it knows about groups, members, keys, manifests, and ownership, but not about
 what rides inside the group key.
 

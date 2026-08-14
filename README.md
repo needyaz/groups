@@ -4,7 +4,7 @@ End-to-end-encrypted group membership: models, key rotation, per-member
 encrypted manifests, and a signed ownership charter. Extracted from a shipped
 production app; the crypto is byte-identical to that source.
 
-This is the L1 layer: it builds on the [`identity`](../identity) package and has
+This is the L1 layer: it builds on the [`identity`](https://github.com/needyaz/identity) package and has
 **no domain coupling** — it knows about groups, members, keys, manifests, and
 ownership, but not about what payloads ride inside the group key.
 
@@ -82,9 +82,9 @@ solves a threat outside this design point, and each carries real cost:
   manifests are eventually-consistent blobs — and building one is a larger
   system than this entire layer.
 - MLS implementations are large, subtle, and (as of this writing) there is no
-  production-grade Dart implementation. This layer is ~850 lines that two
-  independent implementations (Dart + the server-side verifier) check
-  byte-for-byte against golden vectors.
+  production-grade Dart implementation. This layer is ~1,250 lines of pure
+  Dart, and its ownership-charter validator is checked byte-for-byte against
+  an independent server-side reimplementation via a shared golden vector.
 
 If your groups are large, member-administered, or your threat model includes
 the group's own administrator, use MLS — this library is the wrong tool. For
@@ -93,7 +93,7 @@ made honestly and in the open.
 
 ## Why this is public
 
-Same reason as [`identity`](../identity), and not primarily for reuse. This
+Same reason as [`identity`](https://github.com/needyaz/identity), and not primarily for reuse. This
 layer is where the group-encryption claims of the apps built on it are kept
 or broken — who can read what, what a removal actually revokes, what the
 server can and cannot do. Publishing it turns the threat model above from a
@@ -202,10 +202,12 @@ flutter pub get
 flutter test
 ```
 
-Expect `All tests passed!` — 61 tests across three files:
+Expect `All tests passed!` — 72 tests across three files:
 
-- **`group_model_test.dart`** (11) — `Group`/`GroupMember` JSON round-trips,
-  the manifest-vs-local-storage field split, and the `GroupRole` golden test
+- **`group_model_test.dart`** (17) — `Group`/`GroupMember` JSON round-trips,
+  the manifest-vs-local-storage field split, the unknown-field passthrough
+  rules (wire-visible `Group.extra` vs local-only `GroupMember.extra`;
+  recognized keys can never be shadowed), and the `GroupRole` golden test
   (a pure-member roster serializes byte-for-byte unchanged, proving the
   role-only-when-non-default backward-compat rule holds).
 - **`group_service_test.dart`** (24) — the full lifecycle against the REAL
@@ -215,14 +217,16 @@ Expect `All tests passed!` — 61 tests across three files:
   manifest naming a different group, a member-published manifest usurping
   ownership, a replayed pre-transfer charter, and tampered / truncated /
   garbage / wrong-recipient blobs — all of which must be refused, not thrown on.
-- **`ownership_charter_test.dart`** (26) — the **golden-vector parity anchor**
+- **`ownership_charter_test.dart`** (31) — the **golden-vector parity anchor**
   (a fixed, pre-signed chain that must validate to owner uid `90ad2339…` here
   and in the server-side verifier; if it goes red, canonical-JSON bytes,
   SHA-256, or Ed25519 verification has drifted between the two languages),
   plus one test per rejection path: forged genesis and link signatures,
   cross-group grafts, hash-binding forgery, spliced `prevHash`, self-links,
   non-increasing timestamps, the removed `legacy` binding, float/oversized
-  integers (the cross-language parity trap), and schema violations.
+  integers (the cross-language parity trap), and schema violations — and the
+  `charterEnforcedOwner` fail-open/high-water-mark behavior for local
+  enforcement decisions.
 
 ```
 flutter analyze
@@ -273,7 +277,7 @@ binaries embed these — preserve the upstream notices):
 
 | Dependency | Used by | License |
 |---|---|---|
-| [`identity`](../identity) | foundation: identity, key derivation, crypto primitives | MIT |
+| [`identity`](https://github.com/needyaz/identity) | foundation: identity, key derivation, crypto primitives | MIT |
 | [libsodium](https://github.com/jedisct1/libsodium) | all crypto (via `sodium`) | ISC |
 | [`sodium`](https://pub.dev/packages/sodium) (Dart bindings) | libsodium types + group-key generation | BSD-3-Clause |
 | [`crypto`](https://pub.dev/packages/crypto) | SHA-256 for charter hashing | BSD-3-Clause |

@@ -1,8 +1,8 @@
 ## 0.4.0
 
-Adopter-portability release (unblocks the Mylo `GroupService`/`Group` swap).
-All additive; defaults are byte- and behavior-identical to 0.3.0, so existing
-consumers see no change.
+Adopter-portability release (the seams a consuming app needs to swap its own
+group models/service out for this package's). All additive; defaults are
+byte- and behavior-identical to 0.3.0, so existing consumers see no change.
 
 - **Unknown-field passthrough**: `Group.extra` (wire-visible — re-emitted by
   `toManifestJson()`, so a package-based republish can't silently drop an
