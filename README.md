@@ -91,6 +91,22 @@ the group's own administrator, use MLS — this library is the wrong tool. For
 small groups with a definitionally-trusted owner, this is the same trade
 made honestly and in the open.
 
+## Why this is public
+
+Same reason as [`identity`](../identity), and not primarily for reuse. This
+layer is where the group-encryption claims of the apps built on it are kept
+or broken — who can read what, what a removal actually revokes, what the
+server can and cannot do. Publishing it turns the threat model above from a
+marketing paragraph into a checkable artifact: the adversarial tests and the
+charter golden vector run on any clean checkout, and the gaps are listed by
+us under "Known gaps" rather than discovered by someone else.
+
+It is MIT-licensed and genuinely adoptable — the `CharterPolicy` and
+config seams exist for exactly that — but read it first as a statement of
+how we build: state the design point, defend it, test every rejection path
+with input an attacker could actually produce, and write down what is *not*
+provided next to what is.
+
 ## What's in here
 
 - **`group.dart`** — `Group` + `GroupMember` models, with a clean split between
