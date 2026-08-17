@@ -1,5 +1,7 @@
 # groups
 
+[![CI](https://github.com/needyaz/groups/actions/workflows/ci.yml/badge.svg)](https://github.com/needyaz/groups/actions/workflows/ci.yml)
+
 End-to-end-encrypted group membership: models, key rotation, per-member
 encrypted manifests, and a signed ownership charter. Extracted from a shipped
 production app; the crypto is byte-identical to that source.
