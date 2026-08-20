@@ -198,6 +198,15 @@ class GroupService {
     required String signingKeyDomain,
     bool allowUnchartedFallback = false,
   }) {
+    // Idempotent no-op when the target already owns the group. This is the
+    // RETRY trap: transfer A→B succeeds locally but the manifest publish
+    // fails; the retry calls this again with the already-updated group and
+    // would mint either a B→B self-link or a link not signed by the (now
+    // previous) owner — both permanently invalid under [validateCharter],
+    // which under a strict policy stops every member's manifest decrypting.
+    // A no-op makes publish-retry loops safe by construction.
+    if (newOwnerUid == group.ownerUid) return group;
+
     final newMember = group.memberByUid(newOwnerUid);
     final charter = group.charter;
     final newEd = newMember?.edPubKeyB64;
@@ -223,8 +232,20 @@ class GroupService {
           ts: nextCharterTimestamp(
               prevEntry, DateTime.now().millisecondsSinceEpoch),
         );
-        return group
-            .copyWith(ownerUid: newOwnerUid, charter: [...charter, link]);
+        final extended = [...charter, link];
+        // Never hand back a chain that can't validate: a poisoned charter is
+        // silent at mint time and permanent once published (e.g. the caller
+        // passed a group whose tip the [currentOwner] key no longer signs
+        // for). A throw here is retryable; a published bad link is not.
+        final check = validateCharter(sodium, extended, group.groupId);
+        if (!check.valid) {
+          throw StateError(
+            'Refusing to mint an invalid charter link (${check.reason}): '
+            'the current owner/tip and the signer no longer agree — '
+            'reload the group state and retry.',
+          );
+        }
+        return group.copyWith(ownerUid: newOwnerUid, charter: extended);
       } finally {
         signing.secretKey.dispose();
       }
