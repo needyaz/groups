@@ -269,6 +269,29 @@ void main() {
     expect(jsonEncode(g.toManifestJson()), expected);
   });
 
+  test('publishCounter: omitted at 0 (golden compat), published when bumped, '
+      'round-trips', () {
+    final g = Group(
+      groupId: 'g1',
+      name: 'Fam',
+      ownerUid: 'u1',
+      members: const [GroupMember(uid: 'u1', publicKeyB64: 'cHVi')],
+      groupKey: Uint8List(32),
+      createdAt: 7,
+    );
+    // Counter-less groups (and every consumer that never bumps) stay
+    // byte-identical on the wire — same pattern as the roles field.
+    expect(g.toManifestJson().containsKey('publishCounter'), isFalse);
+
+    final bumped = GroupService.bumpedForPublish(g);
+    expect(bumped.publishCounter, 1);
+    final j = bumped.toManifestJson();
+    expect(j['publishCounter'], 1);
+    final rt = Group.fromJson(Map<String, dynamic>.from(j));
+    expect(rt.publishCounter, 1);
+    expect(GroupService.bumpedForPublish(rt).publishCounter, 2);
+  });
+
   test('Group role helpers: owner via ownerUid, co-owner via role', () {
     final g = Group(
       groupId: 'g1',

@@ -268,6 +268,14 @@ class GroupService {
     return transferOwnership(group, newOwnerUid);
   }
 
+  /// The group as it should be PUBLISHED: the wire-visible publish counter
+  /// bumped once. Call once per publish EVENT (before the per-member
+  /// manifest fan-out, so every member's copy carries the same counter) and
+  /// adopt the returned group locally — the next publish bumps from there.
+  /// Consumers that never call this stay byte-identical on the wire.
+  static Group bumpedForPublish(Group group) =>
+      group.copyWith(publishCounter: group.publishCounter + 1);
+
   /// Encrypt the group manifest for [memberPublicKey] using
   /// DH(ownerSecretKey, memberPublicKey).
   static String encryptManifestFor({
@@ -318,6 +326,7 @@ class GroupService {
     required Uint8List ownerPublicKey,
     required String expectedGroupId,
     int minCharterHeight = 0,
+    int minPublishCounter = 0,
     CharterPolicy charterPolicy = CharterPolicy.strict,
   }) {
     PrecalculatedBox? box;
@@ -331,6 +340,12 @@ class GroupService {
 
       if (group.groupId != expectedGroupId) return null;
       if (group.groupKey.length != 32) return null;
+      // Freshness floor, caller-provided knowledge like [expectedGroupId]:
+      // a manifest older than what this device already accepted is a stale
+      // read (server cache, a racy second device) — accepting it would roll
+      // back roster changes and the key rotation that rode them. Strict
+      // under EVERY policy: this is arbitration, not charter trust.
+      if (group.publishCounter < minPublishCounter) return null;
       // Drop roster entries that fail the uid↔key binding rather than
       // rejecting the whole manifest. Dropping is both safer and more
       // available: an unbound entry is simply never trusted (nothing is ever

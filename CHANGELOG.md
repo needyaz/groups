@@ -1,5 +1,15 @@
 ## 0.5.0
 
+- **Manifests gain a monotonic `publishCounter`** — the freshness arbitration
+  a stale manifest read lacked. Wire-visible only when > 0 (unbumped fleets
+  stay byte-identical, golden-pinned); publishers bump once per publish event
+  via `GroupService.bumpedForPublish`; `decryptManifest` gains
+  `minPublishCounter` and refuses a manifest below the caller's persisted
+  high-water mark under EVERY charter policy. Closes the replayed
+  pre-rotation manifest restoring a removed member and rolling the group key
+  back to one they still hold; the counter arbitrates rollback, not
+  divergence (equal-counter concurrent publishes remain last-write-wins).
+  SPEC.md's manifest shape, check table, and threat model updated to match.
 - **Ownership transfers are retry-safe.** `transferOwnershipWithCharter` had
   a publish-retry trap: a repeat call with the already-updated group minted a
   self-link or a link not signed by the previous owner — permanently invalid

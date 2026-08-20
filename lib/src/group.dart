@@ -226,6 +226,19 @@ class Group {
   /// state. Local-only: never included in the manifest. Defaults to 0.
   final int manifestUpdatedAt;
 
+  /// Monotonic publish counter, WIRE-VISIBLE — the arbitration a stale
+  /// manifest read otherwise lacks. Charter `height` only advances on
+  /// ownership transfers, so a re-served OLD manifest (server cache, a racy
+  /// second device) silently rolled back roster changes AND the group-key
+  /// rotation that rode them. Publishers bump this once per publish event
+  /// ([GroupService.bumpedForPublish]); consumers persist a per-group
+  /// high-water mark and pass it to `decryptManifest` as
+  /// `minPublishCounter` — exactly the `minCharterHeight` pattern.
+  ///
+  /// Serialized only when > 0, so counter-less groups (and every peer that
+  /// never bumps) stay byte-identical on the wire. Defaults to 0.
+  final int publishCounter;
+
   /// Signed ownership charter (delegation chain). Null for groups created
   /// before charters existed — such groups have no enforceable ownership proof
   /// and gain one only by being recreated. Carried in the manifest (so every
@@ -256,6 +269,7 @@ class Group {
     required this.groupKey,
     required this.createdAt,
     this.manifestUpdatedAt = 0,
+    this.publishCounter = 0,
     this.charter,
     this.extra = const {},
   });
@@ -273,6 +287,7 @@ class Group {
     List<GroupMember>? members,
     Uint8List? groupKey,
     int? manifestUpdatedAt,
+    int? publishCounter,
     List<Object?>? charter,
     bool clearCharter = false,
     Map<String, Object?>? extra,
@@ -285,6 +300,7 @@ class Group {
         groupKey: groupKey ?? this.groupKey,
         createdAt: createdAt,
         manifestUpdatedAt: manifestUpdatedAt ?? this.manifestUpdatedAt,
+        publishCounter: publishCounter ?? this.publishCounter,
         charter: clearCharter ? null : (charter ?? this.charter),
         extra: extra ?? this.extra,
       );
@@ -327,6 +343,7 @@ class Group {
       'members': members.map((m) => m.toManifestJson()).toList(),
       'groupKey': base64.encode(groupKey),
       'createdAt': createdAt,
+      if (publishCounter > 0) 'publishCounter': publishCounter,
       if (charter != null) 'charter': charter,
     };
     for (final e in extra.entries) {
@@ -352,6 +369,7 @@ class Group {
     'groupKey',
     'createdAt',
     'manifestUpdatedAt',
+    'publishCounter',
     'charter',
   };
 
@@ -367,6 +385,7 @@ class Group {
       groupKey: Uint8List.fromList(base64.decode(j['groupKey'] as String)),
       createdAt: _asInt(j['createdAt'])!,
       manifestUpdatedAt: _asInt(j['manifestUpdatedAt']) ?? 0,
+      publishCounter: _asInt(j['publishCounter']) ?? 0,
       charter: rawCharter is List ? rawCharter.cast<Object?>() : null,
       extra: {
         for (final e in j.entries)

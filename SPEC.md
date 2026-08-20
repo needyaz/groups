@@ -11,7 +11,9 @@ charter key, learned from peers), `displayName`, plus local-only `localDisplayNa
 `avatarEmoji`, `avatarPhotoPath`, `avatarPlain`.
 
 **Group**: `groupId`, `name`, `ownerUid`, `members[]`, `groupKey` (32-byte
-symmetric), `createdAt`, `manifestUpdatedAt` (local-only), `charter`.
+symmetric), `createdAt`, `manifestUpdatedAt` (local-only), `publishCounter`
+(wire-visible, serialized only when > 0 — see *Manifest freshness* below),
+`charter`.
 
 Two JSON shapes:
 - `toManifestJson()` — server/peers. Excludes local-only fields; `groupKey` is
@@ -59,6 +61,7 @@ peer-authored — so it validates rather than merely decrypting, and returns nul
 | charter tip uid `==` manifest `ownerUid` | divergence is the usurpation attack, not a reason to relax |
 | charter tip box key `==` the sending owner's key | only the charter's owner may publish |
 | `height >= minCharterHeight` (caller high-water mark) | rejects a replayed older chain |
+| `publishCounter >= minPublishCounter` (caller high-water mark) | rejects a replayed older MANIFEST: charter height only moves on ownership transfers, so without this a re-served pre-rotation manifest silently restores a removed member and rolls the group key back to one they still hold. Enforced under **every** charter policy — it is caller-provided arbitration like the `groupId` pin, not charter trust |
 | `groupKey` is 32 bytes; every roster entry's `uid == uidForBoxPublicKey(its key)` | see *Roster binding* |
 
 When a group has **no** charter there is nothing to enforce and only the
@@ -193,13 +196,20 @@ Two invariants that live in *calling* code, not here:
 - **Rotation only helps if manifests are re-published.** `removeMember` mints a
   fresh key, but members learn it from a manifest — an app that rotates without
   re-publishing leaves everyone on the old key.
-- **Manifests carry no freshness field.** Nothing in `toManifestJson()` is
-  monotonic, so a replayed pre-rotation manifest is indistinguishable from a
-  current one and would put members back on a key a removed member holds. A
-  transport that can reorder or replay must carry its own epoch/version outside
-  the manifest, or an app must treat the charter `height` plus its own sequencing
-  as the freshness signal. Closing this inside the manifest is a wire change and
-  is not yet done.
+- **Manifest freshness is opt-in.** The manifest now carries a monotonic
+  `publishCounter` (inside the encrypted, owner-authenticated box — a server
+  can't forge or strip it without breaking the box; omitted at zero so
+  unbumped fleets stay byte-identical). Publishers bump once per publish
+  event via `GroupService.bumpedForPublish` and adopt the result; consumers
+  persist their highest accepted counter per group and pass it to
+  `decryptManifest` as `minPublishCounter` (the `minCharterHeight` pattern).
+  The replayed pre-rotation manifest is then refused instead of putting
+  members back on a key a removed member holds. Residuals, stated plainly:
+  an UNADOPTED fleet keeps the old exposure (nothing protects until the
+  publisher bumps and readers pass a floor), and the counter arbitrates
+  **rollback, not divergence** — two devices bumping independently from the
+  same base produce equal counters with different contents, where
+  last-write-wins remains the (pre-existing) semantics.
 
 ## Out of scope (deliberately app-local)
 

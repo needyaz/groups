@@ -204,21 +204,24 @@ flutter pub get
 flutter test
 ```
 
-Expect `All tests passed!` — 75 tests across three files:
+Expect `All tests passed!` — 77 tests across three files:
 
-- **`group_model_test.dart`** (17) — `Group`/`GroupMember` JSON round-trips,
+- **`group_model_test.dart`** (18) — `Group`/`GroupMember` JSON round-trips,
   the manifest-vs-local-storage field split, the unknown-field passthrough
   rules (wire-visible `Group.extra` vs local-only `GroupMember.extra`;
-  recognized keys can never be shadowed), and the `GroupRole` golden test
+  recognized keys can never be shadowed), the `publishCounter`
+  omitted-at-zero/round-trip golden, and the `GroupRole` golden test
   (a pure-member roster serializes byte-for-byte unchanged, proving the
   role-only-when-non-default backward-compat rule holds).
-- **`group_service_test.dart`** (24) — the full lifecycle against the REAL
+- **`group_service_test.dart`** (28) — the full lifecycle against the REAL
   crypto end to end (create → add → remove/rotate → manifest round-trip →
   transfer → roles → sealed keys → group-key blobs), **plus the adversarial
   boundary cases**: a roster entry whose uid doesn't match its box key, a
   manifest naming a different group, a member-published manifest usurping
-  ownership, a replayed pre-transfer charter, and tampered / truncated /
-  garbage / wrong-recipient blobs — all of which must be refused, not thrown on.
+  ownership, a replayed pre-transfer charter, a stale manifest below the
+  publish-counter high-water mark, retry-idempotent/self-validating
+  ownership transfers, and tampered / truncated / garbage / wrong-recipient
+  blobs — all of which must be refused, not thrown on.
 - **`ownership_charter_test.dart`** (31) — the **golden-vector parity anchor**
   (a fixed, pre-signed chain that must validate to owner uid `90ad2339…` here
   and in the server-side verifier; if it goes red, canonical-JSON bytes,
@@ -259,12 +262,14 @@ derivation vectors now are) is tracked work.
 
 Stated plainly rather than left for a reader to find:
 
-- **Manifests carry no freshness field.** Nothing in `toManifestJson()` is
-  monotonic, so a replayed pre-rotation manifest — validly signed by the owner,
-  no forgery needed — is indistinguishable from a current one and can put
-  members back on a key a removed member still holds. Closing this properly
-  means adding a key epoch to the manifest, which is a wire change. Until then
-  a transport that can replay must carry its own sequencing.
+- **Manifest freshness is opt-in.** The manifest carries a monotonic
+  `publishCounter` (omitted at zero — unbumped fleets stay byte-identical);
+  publishers bump via `GroupService.bumpedForPublish`, consumers persist a
+  per-group high-water mark and pass `minPublishCounter` to
+  `decryptManifest`. A replayed pre-rotation manifest is then refused. Until
+  a fleet adopts both halves it keeps the old exposure, and the counter
+  arbitrates rollback, not divergence (equal-counter concurrent publishes
+  remain last-write-wins).
 - **The charter golden vector is not independently generated** (see above).
 - **No roster-consistency proof**: a malicious owner can in principle show
   different members different rosters. See the threat model.
