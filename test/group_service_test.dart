@@ -544,6 +544,83 @@ void main() {
       expect(r.height, 2);
     });
 
+    test('a RETRY with the already-updated group is an idempotent no-op', () {
+      // The publish-retry trap: transfer A→B succeeds locally, the manifest
+      // publish fails, and the retry calls transfer again with the ALREADY
+      // updated group (owner=B, tip=B). Unguarded, that minted a B→B
+      // self-link or a link not signed by the previous owner — permanently
+      // invalid, which under a strict policy stops every member's manifest
+      // from decrypting. The retry must change nothing.
+      final owner = generateIdentity(sodium);
+      final next = generateIdentity(sodium);
+      var g = GroupService.createGroup(
+          sodium: sodium,
+          name: 'G',
+          identity: owner,
+          signingKeyDomain: signingDomain);
+      g = GroupService.addMember(
+          g, memberFor(next, edPubKeyB64: edKeyOf(next)));
+      final g2 = GroupService.transferOwnershipWithCharter(
+        sodium: sodium,
+        group: g,
+        currentOwner: owner,
+        newOwnerUid: next.uid,
+        signingKeyDomain: signingDomain,
+      );
+
+      // The retry, exactly as an app's publish-retry loop would issue it.
+      final retried = GroupService.transferOwnershipWithCharter(
+        sodium: sodium,
+        group: g2,
+        currentOwner: owner, // the retry still signs as the OLD owner
+        newOwnerUid: next.uid,
+        signingKeyDomain: signingDomain,
+      );
+      expect(identical(retried, g2), isTrue, reason: 'no-op, not a new link');
+      expect(retried.charter!.length, 2);
+      final r = validateCharter(sodium, retried.charter!, retried.groupId);
+      expect(r.valid, isTrue, reason: r.reason);
+    });
+
+    test('refuses to mint a link the validator would reject', () {
+      // A caller passes a group whose tip the signing identity no longer
+      // matches (stale local state after someone else's transfer): the
+      // built link would be signature-invalid. Minting it is silent and,
+      // once published, permanent — so the builder validates its own output
+      // and throws (retryable) instead.
+      final owner = generateIdentity(sodium);
+      final mid = generateIdentity(sodium);
+      final next = generateIdentity(sodium);
+      var g = GroupService.createGroup(
+          sodium: sodium,
+          name: 'G',
+          identity: owner,
+          signingKeyDomain: signingDomain);
+      g = GroupService.addMember(g, memberFor(mid, edPubKeyB64: edKeyOf(mid)));
+      g = GroupService.addMember(
+          g, memberFor(next, edPubKeyB64: edKeyOf(next)));
+      // Real transfer owner→mid: the tip now requires MID's signature.
+      final g2 = GroupService.transferOwnershipWithCharter(
+        sodium: sodium,
+        group: g,
+        currentOwner: owner,
+        newOwnerUid: mid.uid,
+        signingKeyDomain: signingDomain,
+      );
+      // A further transfer signed by the ORIGINAL owner (stale state) must
+      // refuse rather than hand back a poisoned chain.
+      expect(
+        () => GroupService.transferOwnershipWithCharter(
+          sodium: sodium,
+          group: g2,
+          currentOwner: owner, // no longer the tip's signer
+          newOwnerUid: next.uid,
+          signingKeyDomain: signingDomain,
+        ),
+        throwsA(isA<StateError>()),
+      );
+    });
+
     test('refuses to silently downgrade when the ed key is unknown', () {
       final owner = generateIdentity(sodium);
       final next = generateIdentity(sodium);
