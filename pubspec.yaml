@@ -1,6 +1,6 @@
 name: groups
 description: "End-to-end-encrypted group membership, key rotation, manifests, and a signed ownership charter."
-version: 0.4.0
+version: 0.5.0
 publish_to: 'none'
 
 environment:
