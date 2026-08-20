@@ -168,6 +168,11 @@ class GroupService {
   /// previously an `assert`, which is stripped in release builds and so let
   /// production set `ownerUid` to an arbitrary string.
   static Group transferOwnership(Group group, String newOwnerUid) {
+    // Same retry idempotence as the charter variant: a repeat with the
+    // already-updated group is a no-op, keeping both transfer paths
+    // uniformly safe in publish-retry loops. (The failure mode here is much
+    // milder — no chain to poison — but uniformity is free.)
+    if (newOwnerUid == group.ownerUid) return group;
     if (group.memberByUid(newOwnerUid) == null) {
       throw ArgumentError.value(
           newOwnerUid, 'newOwnerUid', 'New owner must be a member of the group');

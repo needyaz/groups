@@ -621,6 +621,22 @@ void main() {
       );
     });
 
+    test('plain transferOwnership is retry-idempotent too', () {
+      final owner = generateIdentity(sodium);
+      final next = generateIdentity(sodium);
+      var g = GroupService.createGroup(
+          sodium: sodium,
+          name: 'G',
+          identity: owner,
+          signingKeyDomain: signingDomain);
+      g = GroupService.addMember(g, memberFor(next));
+      final g2 = GroupService.transferOwnership(g, next.uid);
+      // The retry: already the owner → the same group back, no throw even
+      // if roster state changed underneath (uniform with the charter path).
+      expect(identical(GroupService.transferOwnership(g2, next.uid), g2),
+          isTrue);
+    });
+
     test('refuses to silently downgrade when the ed key is unknown', () {
       final owner = generateIdentity(sodium);
       final next = generateIdentity(sodium);

@@ -1,3 +1,15 @@
+## 0.5.0
+
+- **Ownership transfers are retry-safe.** `transferOwnershipWithCharter` had
+  a publish-retry trap: a repeat call with the already-updated group minted a
+  self-link or a link not signed by the previous owner — permanently invalid
+  under `validateCharter`, which under a strict policy stopped every member's
+  manifest from decrypting. Both transfer variants are now idempotent no-ops
+  when the target already owns the group, and the charter builder validates
+  its own extended chain before returning (a retryable `StateError` instead
+  of a silently poisoned link). No wire/crypto change — the guards only
+  constrain what the builder emits.
+
 ## 0.4.0
 
 Adopter-portability release (the seams a consuming app needs to swap its own

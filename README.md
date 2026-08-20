@@ -204,7 +204,7 @@ flutter pub get
 flutter test
 ```
 
-Expect `All tests passed!` — 72 tests across three files:
+Expect `All tests passed!` — 75 tests across three files:
 
 - **`group_model_test.dart`** (17) — `Group`/`GroupMember` JSON round-trips,
   the manifest-vs-local-storage field split, the unknown-field passthrough
