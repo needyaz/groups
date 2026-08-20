@@ -204,7 +204,7 @@ flutter pub get
 flutter test
 ```
 
-Expect `All tests passed!` — 72 tests across three files:
+Expect `All tests passed!` — 74 tests across three files:
 
 - **`group_model_test.dart`** (17) — `Group`/`GroupMember` JSON round-trips,
   the manifest-vs-local-storage field split, the unknown-field passthrough
@@ -259,12 +259,14 @@ derivation vectors now are) is tracked work.
 
 Stated plainly rather than left for a reader to find:
 
-- **Manifests carry no freshness field.** Nothing in `toManifestJson()` is
-  monotonic, so a replayed pre-rotation manifest — validly signed by the owner,
-  no forgery needed — is indistinguishable from a current one and can put
-  members back on a key a removed member still holds. Closing this properly
-  means adding a key epoch to the manifest, which is a wire change. Until then
-  a transport that can replay must carry its own sequencing.
+- **Manifest freshness is opt-in.** The manifest carries a monotonic
+  `publishCounter` (omitted at zero — unbumped fleets stay byte-identical);
+  publishers bump via `GroupService.bumpedForPublish`, consumers persist a
+  per-group high-water mark and pass `minPublishCounter` to
+  `decryptManifest`. A replayed pre-rotation manifest is then refused. Until
+  a fleet adopts both halves it keeps the old exposure, and the counter
+  arbitrates rollback, not divergence (equal-counter concurrent publishes
+  remain last-write-wins).
 - **The charter golden vector is not independently generated** (see above).
 - **No roster-consistency proof**: a malicious owner can in principle show
   different members different rosters. See the threat model.
