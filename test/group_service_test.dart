@@ -139,6 +139,74 @@ void main() {
   });
 
   group('manifest boundary', () {
+    test('a STALE manifest (publish counter below the high-water mark) is '
+        'rejected — the roster/key rollback vector', () {
+      final owner = generateIdentity(sodium);
+      final member = generateIdentity(sodium);
+      final evicted = generateIdentity(sodium);
+      var g = GroupService.createGroup(
+          sodium: sodium,
+          name: 'Fresh',
+          identity: owner,
+          signingKeyDomain: signingDomain);
+      g = GroupService.addMember(g, memberFor(member));
+      g = GroupService.addMember(g, memberFor(evicted));
+
+      // Publish 1: the pre-removal state (the copy a cache might re-serve).
+      final v1 = GroupService.bumpedForPublish(g);
+      final staleBlob = GroupService.encryptManifestFor(
+        sodium: sodium,
+        group: v1,
+        ownerIdentity: owner,
+        memberPublicKey: member.keyPair.publicKey,
+      );
+
+      // Publish 2: the member is removed and the group key ROTATES.
+      final v2 = GroupService.bumpedForPublish(GroupService.removeMember(
+          sodium: sodium, group: v1, memberUid: evicted.uid));
+      final freshBlob = GroupService.encryptManifestFor(
+        sodium: sodium,
+        group: v2,
+        ownerIdentity: owner,
+        memberPublicKey: member.keyPair.publicKey,
+      );
+      final fresh = GroupService.decryptManifest(
+        sodium: sodium,
+        blob: freshBlob,
+        myIdentity: member,
+        ownerPublicKey: owner.keyPair.publicKey,
+        expectedGroupId: g.groupId,
+      )!;
+      expect(fresh.publishCounter, 2);
+      // The consumer persists 2 as its high-water mark; the re-served OLD
+      // manifest must now be refused — accepting it silently restored the
+      // removed member AND rolled the group key back to the retired one.
+      expect(
+        GroupService.decryptManifest(
+          sodium: sodium,
+          blob: staleBlob,
+          myIdentity: member,
+          ownerPublicKey: owner.keyPair.publicKey,
+          expectedGroupId: g.groupId,
+          minPublishCounter: fresh.publishCounter,
+        ),
+        isNull,
+      );
+      // At its own mark (or below) it still decrypts — equality is not
+      // staleness; concurrent same-counter publishers stay readable.
+      expect(
+        GroupService.decryptManifest(
+          sodium: sodium,
+          blob: freshBlob,
+          myIdentity: member,
+          ownerPublicKey: owner.keyPair.publicKey,
+          expectedGroupId: g.groupId,
+          minPublishCounter: fresh.publishCounter,
+        ),
+        isNotNull,
+      );
+    });
+
     test('encrypt→decrypt round-trips between owner and member', () {
       final owner = generateIdentity(sodium);
       final member = generateIdentity(sodium);
