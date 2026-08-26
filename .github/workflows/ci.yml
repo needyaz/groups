@@ -10,23 +10,14 @@ jobs:
     name: Dart — flutter test + analyze
     runs-on: ubuntu-latest
     steps:
-      # groups depends on identity via a sibling path dependency
-      # (identity: {path: ../identity} in pubspec.yaml), so check both
-      # repos out side by side in the workspace.
+      # identity is a git dependency (identity: {git: {url: ..., ref: main}}
+      # in pubspec.yaml), so `flutter pub get` fetches it directly — no
+      # sibling checkout needed.
       - uses: actions/checkout@v4
-        with:
-          path: groups
-      - uses: actions/checkout@v4
-        with:
-          repository: needyaz/identity
-          path: identity
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
           cache: true
       - run: flutter pub get
-        working-directory: groups
       - run: flutter analyze
-        working-directory: groups
       - run: flutter test
-        working-directory: groups

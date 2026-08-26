@@ -13,7 +13,9 @@ dependencies:
 
   # Foundation: identity, key derivation, and the generic crypto primitives.
   identity:
-    path: ../identity
+    git:
+      url: https://github.com/needyaz/identity.git
+      ref: main
 
   sodium: ^4.0.0           # libsodium types + group-key generation
   crypto: ^3.0.3           # SHA-256 for charter hashing
