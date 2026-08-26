@@ -148,10 +148,9 @@ if (group == null) return; // do not trust it
 
 ## Verifying this works
 
-A clean checkout reproduces this — no backend, no account needed. `identity`
-is a git dependency (`ref: main`, no tags yet — see
+`identity` is a git dependency (`ref: main`, no tags yet — see
 [`identity`'s CLAUDE.md](https://github.com/needyaz/identity/blob/main/CLAUDE.md)),
-so `dart pub get` fetches it directly; no sibling checkout needed.
+so `dart pub get` fetches it directly.
 
 Prereqs: the Dart SDK.
 
