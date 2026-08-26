@@ -3,9 +3,9 @@
 [![CI](https://github.com/needyaz/groups/actions/workflows/ci.yml/badge.svg)](https://github.com/needyaz/groups/actions/workflows/ci.yml)
 
 End-to-end-encrypted group membership: models, key rotation, per-member
-encrypted manifests, and a signed ownership charter. Pure Dart — no Flutter.
-This package is the group-membership logic that shipped in a production app,
-extracted in place.
+encrypted manifests, and a signed ownership charter. This package is the
+group-membership logic that shipped in a production app, extracted in
+place.
 
 This is the L1 layer: it builds on the [`identity`](https://github.com/needyaz/identity) package and has
 no domain coupling — it knows about groups, members, keys, manifests, and
@@ -153,7 +153,7 @@ is a git dependency (`ref: main`, no tags yet — see
 [`identity`'s CLAUDE.md](https://github.com/needyaz/identity/blob/main/CLAUDE.md)),
 so `dart pub get` fetches it directly; no sibling checkout needed.
 
-Prereqs: the Dart SDK (no Flutter needed).
+Prereqs: the Dart SDK.
 
 ```
 dart pub get

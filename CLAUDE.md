@@ -11,10 +11,10 @@ manifest DH crypto, and group-key blob crypto), and the signed **ownership
 charter** (genesis + transfer links + validator).
 
 It was **extracted from a shipped production app** — this package is that
-app's group-membership logic, moved in place. **Pure Dart** — no Flutter. It
-depends on [`identity`](https://github.com/needyaz/identity) and has **no
-domain coupling** — it knows about groups, members, keys, manifests, and
-ownership, but not about what rides inside the group key.
+app's group-membership logic, moved in place. It depends on
+[`identity`](https://github.com/needyaz/identity) and has **no domain
+coupling** — it knows about groups, members, keys, manifests, and ownership,
+but not about what rides inside the group key.
 
 ## Dependency direction
 
