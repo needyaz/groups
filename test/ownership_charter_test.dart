@@ -7,7 +7,7 @@ library;
 
 import 'dart:convert';
 
-import 'package:flutter_test/flutter_test.dart';
+import 'package:test/test.dart';
 import 'package:groups/groups.dart';
 
 const _vectorUid = '90ad2339401503c0a5645621a9bd89cb';

@@ -10,10 +10,11 @@ operations (create, add, remove + key rotation, ownership transfer, per-member
 manifest DH crypto, and group-key blob crypto), and the signed **ownership
 charter** (genesis + transfer links + validator).
 
-Extracted from a shipped production app; the crypto is byte-identical to that
-source. It depends on [`identity`](https://github.com/needyaz/identity) and has **no domain coupling** —
-it knows about groups, members, keys, manifests, and ownership, but not about
-what rides inside the group key.
+It was **extracted from a shipped production app** — this package is that
+app's group-membership logic, moved in place. **Pure Dart** — no Flutter. It
+depends on [`identity`](https://github.com/needyaz/identity) and has **no
+domain coupling** — it knows about groups, members, keys, manifests, and
+ownership, but not about what rides inside the group key.
 
 ## Dependency direction
 
@@ -84,10 +85,10 @@ open work.
 
 ## Testing
 
-`flutter test` — model serialization, the full lifecycle against real libsodium
+`dart test` — model serialization, the full lifecycle against real libsodium
 (create → add → remove+rotate → manifest round-trip → transfer), and the
 **adversarial suite**: one case per charter rejection path plus the manifest
-boundary attacks. `flutter analyze` clean. Every change gets a test; a new
+boundary attacks. `dart analyze` clean. Every change gets a test; a new
 rejection path in the validator gets a test asserting its reason code.
 
 ## Docs & commits

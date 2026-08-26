@@ -3,8 +3,9 @@
 [![CI](https://github.com/needyaz/groups/actions/workflows/ci.yml/badge.svg)](https://github.com/needyaz/groups/actions/workflows/ci.yml)
 
 End-to-end-encrypted group membership: models, key rotation, per-member
-encrypted manifests, and a signed ownership charter. Extracted from a shipped
-production app; the crypto matches that source byte-for-byte.
+encrypted manifests, and a signed ownership charter. Pure Dart — no Flutter.
+This package is the group-membership logic that shipped in a production app,
+extracted in place.
 
 This is the L1 layer: it builds on the [`identity`](https://github.com/needyaz/identity) package and has
 no domain coupling — it knows about groups, members, keys, manifests, and
@@ -150,13 +151,13 @@ if (group == null) return; // do not trust it
 A clean checkout reproduces this — no backend, no account needed. `identity`
 is a git dependency (`ref: main`, no tags yet — see
 [`identity`'s CLAUDE.md](https://github.com/needyaz/identity/blob/main/CLAUDE.md)),
-so `flutter pub get` fetches it directly; no sibling checkout needed.
+so `dart pub get` fetches it directly; no sibling checkout needed.
 
-Prereqs: Flutter SDK.
+Prereqs: the Dart SDK (no Flutter needed).
 
 ```
-flutter pub get
-flutter test
+dart pub get
+dart test
 ```
 
 Expect `All tests passed!` — 77 tests across three files:
@@ -189,7 +190,7 @@ Expect `All tests passed!` — 77 tests across three files:
   enforcement decisions.
 
 ```
-flutter analyze
+dart analyze
 ```
 
 Expect `No issues found!`.
@@ -239,7 +240,7 @@ binaries embed these — preserve the upstream notices):
 | [libsodium](https://github.com/jedisct1/libsodium) | all crypto (via `sodium`) | ISC |
 | [`sodium`](https://pub.dev/packages/sodium) (Dart bindings) | libsodium types + group-key generation | BSD-3-Clause |
 | [`crypto`](https://pub.dev/packages/crypto) | SHA-256 for charter hashing | BSD-3-Clause |
-| [`bip39`](https://pub.dev/packages/bip39), [`flutter_secure_storage`](https://pub.dev/packages/flutter_secure_storage) | transitive via `identity` | BSD-3-Clause |
+| [`bip39`](https://pub.dev/packages/bip39) | transitive via `identity` | BSD-3-Clause |
 
 `identity`'s optional native crypto mirrors (`native/ios/`, `native/android/`)
 carry additional notices (swift-sodium ISC, lazysodium-android MPL-2.0 as a
