@@ -145,35 +145,12 @@ final group = GroupService.decryptManifest(
 if (group == null) return; // do not trust it
 ```
 
-## Layering note
-
-`groups` depends on `identity`, which is a Flutter package (it bundles
-secure-storage). So `groups` is currently a Flutter package even though its own
-code is pure Dart. If a pure-Dart (server/CLI) consumer is ever needed, split
-`identity` into a pure `identity_core` (crypto + identity) and a Flutter
-`identity` (storage), and point `groups` at the core.
-
 ## Verifying this works
 
-A clean checkout reproduces this — no backend, no account needed. One extra
-step vs. a normal standalone repo:
-
-> `identity` must be cloned as a sibling directory. `groups` depends on it via
-> a local **path** dependency (`identity: {path: ../identity}` in
-> `pubspec.yaml`), not a git/pub dependency — so `flutter pub get` fails with
-> a "Content-Length" / path-not-found error unless `../identity` (relative to
-> this repo) already exists. This is a known gap for an outside clone, not
-> yet fixed — tracked to become a git dependency later so `groups` is
-> clone-and-go standalone. For now:
->
-> ```
-> git clone https://github.com/needyaz/identity.git
-> git clone https://github.com/needyaz/groups.git
-> # the two must be siblings on disk:
-> #   some-dir/identity/
-> #   some-dir/groups/
-> cd groups
-> ```
+A clean checkout reproduces this — no backend, no account needed. `identity`
+is a git dependency (`ref: main`, no tags yet — see
+[`identity`'s CLAUDE.md](https://github.com/needyaz/identity/blob/main/CLAUDE.md)),
+so `flutter pub get` fetches it directly; no sibling checkout needed.
 
 Prereqs: Flutter SDK.
 
