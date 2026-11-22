@@ -1,0 +1,67 @@
+id	status	source	statement	test
+GRP-001	C	SPEC.md Data model	GroupMember.toManifestJson excludes local-only fields while toJson includes them and round-trips.	test/group_model_test.dart
+GRP-002	C	SPEC.md Data model	GroupMember.name prefers the local name, then display name, then a truncated uid.	test/group_model_test.dart
+GRP-003	C	SPEC.md Data model	Avatar resolution: plain suppresses, local override wins, otherwise the received path; clearAvatarPhotoPath resets the override.	test/group_model_test.dart
+GRP-004	C	SPEC.md Data model	Group round-trips through toJson including groupKey and charter; toManifestJson excludes local-only fields.	test/group_model_test.dart
+GRP-005	C	SPEC.md Data model	A legacy emoji key is read into avatarEmoji and migrated on the next write.	test/group_model_test.dart
+GRP-006	C	SPEC.md Data model	Member role defaults to member and is omitted from a role-less manifest; a non-default role is published and round-trips.	test/group_model_test.dart
+GRP-007	C	SPEC.md Data model	Unknown or legacy role names deserialize to member and never throw.	test/group_model_test.dart
+GRP-008	C	SPEC.md Data model	Group role helpers resolve the owner via ownerUid and a co-owner via role.	test/group_model_test.dart
+GRP-009	C	SPEC.md Data model	A pure-member group manifest is byte-identical to the pre-roles golden output.	test/group_model_test.dart
+GRP-010	C	SPEC.md Unknown-field passthrough	Group.fromJson captures unknown keys into extra and toManifestJson re-emits them.	test/group_model_test.dart
+GRP-011	C	SPEC.md Unknown-field passthrough	An extra entry can never shadow or fabricate a recognized key.	test/group_model_test.dart
+GRP-012	C	SPEC.md Unknown-field passthrough	GroupMember.extra is local-only: it survives toJson and never appears in toManifestJson.	test/group_model_test.dart
+GRP-013	C	SPEC.md Unknown-field passthrough	copyWith(extra:) replaces the bag so omitting a key clears it.	test/group_model_test.dart
+GRP-014	C	SPEC.md Manifest distribution	publishCounter is omitted from the wire at zero, published when bumped, and round-trips.	test/group_model_test.dart
+GRP-015	C	SPEC.md Ownership charter	createGroup mints a hash-bound charter that validates for the new groupId.	test/group_service_test.dart
+GRP-016	C	SPEC.md Roster binding	addMember is idempotent for a self-consistent member.	test/group_service_test.dart
+GRP-017	C	SPEC.md Roster binding	addMember throws when the uid does not match the box key.	test/group_service_test.dart
+GRP-018	C	SPEC.md Roster binding	addMember throws on a malformed or wrong-length public key.	test/group_service_test.dart
+GRP-019	C	SPEC.md Group key	removeMember drops the member and rotates the group key.	test/group_service_test.dart
+GRP-020	C	SPEC.md Group key	removeMember rotates the key even when the uid was not a member.	test/group_service_test.dart
+GRP-021	C	SPEC.md Manifest distribution	encryptManifestFor/decryptManifest round-trip between owner and member.	test/group_service_test.dart
+GRP-022	C	SPEC.md Manifest distribution	decryptManifest rejects a manifest naming a different group than the pinned expectedGroupId.	test/group_service_test.dart
+GRP-023	C	SPEC.md Roster binding	decryptManifest drops an unbound roster entry rather than rejecting the manifest.	test/group_service_test.dart
+GRP-024	C	SPEC.md Manifest distribution	decryptManifest rejects a usurped manifest not from the charter owner.	test/group_service_test.dart
+GRP-025	C	SPEC.md Manifest distribution	decryptManifest rejects a replayed older charter below minCharterHeight.	test/group_service_test.dart
+GRP-026	C	SPEC.md Manifest distribution	decryptManifest rejects a manifest whose publishCounter is below minPublishCounter.	test/group_service_test.dart
+GRP-027	C	SPEC.md Manifest distribution	Under the tolerant policy a diverged charter is accepted that strict rejects.	test/group_service_test.dart
+GRP-028	C	SPEC.md Manifest distribution	The tolerant policy relaxes only charter authority; the groupId pin and other checks stay strict.	test/group_service_test.dart
+GRP-029	C	SPEC.md Manifest distribution	Under tolerant a usurped manifest is accepted (documented tradeoff).	test/group_service_test.dart
+GRP-030	C	SPEC.md Unknown-field passthrough	An adopter wire field in Group.extra survives the manifest round-trip.	test/group_service_test.dart
+GRP-031	C	SPEC.md Manifest distribution	decryptManifest returns null and never throws on tampered, truncated or garbage blobs.	test/group_service_test.dart
+GRP-032	C	SPEC.md Ownership charter	transferOwnershipWithCharter appends a valid link naming the new owner.	test/group_service_test.dart
+GRP-033	C	SPEC.md Ownership charter	Transfers are retry-idempotent when the target already owns the group.	test/group_service_test.dart
+GRP-034	C	SPEC.md Ownership charter	The charter builder refuses to mint a link the validator would reject.	test/group_service_test.dart
+GRP-035	C	SPEC.md Ownership charter	Transfer refuses to silently downgrade when the new owner's Ed25519 key is unknown.	test/group_service_test.dart
+GRP-036	C	SPEC.md Ownership charter	transferOwnership throws for a non-member.	test/group_service_test.dart
+GRP-037	C	SPEC.md Ownership charter	A two-transfer chain validates to height 3.	test/group_service_test.dart
+GRP-038	C	SPEC.md The app-payload seam	encryptWithGroupKey/decryptWithGroupKey round-trip arbitrary data.	test/group_service_test.dart
+GRP-039	C	SPEC.md Data model	setRole promotes a member to co-owner without rotating the key.	test/group_service_test.dart
+GRP-040	C	SPEC.md The app-payload seam	sealKeyForMember/unsealKey round-trip only for the named member.	test/group_service_test.dart
+GRP-041	C	SPEC.md The app-payload seam	unsealKey returns null and never throws on hostile sealed content.	test/group_service_test.dart
+CHT-001	C	SPEC.md Golden vector	The golden-vector charter validates to the expected owner and height 1, and its genesis groupId matches.	test/ownership_charter_test.dart
+CHT-002	C	SPEC.md Ownership charter	An empty chain is rejected with empty_chain.	test/ownership_charter_test.dart
+CHT-003	C	SPEC.md Ownership charter	A chain over kMaxCharterEntries is rejected with chain_too_long before any crypto.	test/ownership_charter_test.dart
+CHT-004	C	SPEC.md Ownership charter	A non-map entry or an entry missing payload/sig or carrying extra keys is rejected.	test/ownership_charter_test.dart
+CHT-005	C	SPEC.md Ownership charter	A link in first position or a genesis in a later position is rejected.	test/ownership_charter_test.dart
+CHT-006	C	SPEC.md Ownership charter	Float versions or timestamps, out-of-JS-safe-range or negative timestamps, and wrong version numbers are rejected.	test/ownership_charter_test.dart
+CHT-007	C	SPEC.md Ownership charter	Missing or extra payload fields and non-string, null or non-ASCII fields are rejected.	test/ownership_charter_test.dart
+CHT-008	C	SPEC.md Ownership charter	Undecodable base64 in a key field is rejected.	test/ownership_charter_test.dart
+CHT-009	C	SPEC.md Ownership charter	A chain for another groupId is rejected so links cannot be grafted.	test/ownership_charter_test.dart
+CHT-010	C	SPEC.md Ownership charter	An ownerUid not derived from its own box key is rejected.	test/ownership_charter_test.dart
+CHT-011	C	SPEC.md Ownership charter	A forged genesis signature is rejected.	test/ownership_charter_test.dart
+CHT-012	C	SPEC.md Ownership charter	A genesis whose groupId is not the hash of its payload is rejected.	test/ownership_charter_test.dart
+CHT-013	C	SPEC.md Ownership charter	idBinding legacy is rejected with genesis_not_hash_bound and an unknown binding is rejected.	test/ownership_charter_test.dart
+CHT-014	C	SPEC.md Ownership charter	A well-formed transfer link chain validates.	test/ownership_charter_test.dart
+CHT-015	C	SPEC.md Ownership charter	A link not signed by the outgoing owner is rejected.	test/ownership_charter_test.dart
+CHT-016	C	SPEC.md Ownership charter	A link with a spliced prevHash is rejected.	test/ownership_charter_test.dart
+CHT-017	C	SPEC.md Ownership charter	A self-link is rejected so height cannot be inflated.	test/ownership_charter_test.dart
+CHT-018	C	SPEC.md Ownership charter	A non-increasing link timestamp is rejected.	test/ownership_charter_test.dart
+CHT-019	C	SPEC.md Ownership charter	A link grafted from another group's chain is rejected.	test/ownership_charter_test.dart
+CHT-020	C	SPEC.md Ownership charter	charterEnforcedOwner returns the tip owner key and height for a valid chain.	test/ownership_charter_test.dart
+CHT-021	C	SPEC.md Ownership charter	charterEnforcedOwner fails open (null) with no charter, an invalid chain or a diverged tip.	test/ownership_charter_test.dart
+CHT-022	C	SPEC.md Ownership charter	charterEnforcedOwner refuses a chain shorter than minHeight.	test/ownership_charter_test.dart
+CHT-023	C	SPEC.md Ownership charter	charterEntryGroupId returns null on malformed entries and never throws.	test/ownership_charter_test.dart
+GRP-042	U	SPEC.md Manifest distribution	decryptManifest rejects a wrong-length groupKey and a charter tip key differing from the sending owner's key.	
+GRP-043	C	SPEC.md Group key	bumpedForPublish increments publishCounter by one.	test/group_model_test.dart

@@ -215,3 +215,26 @@ Two invariants that live in *calling* code, not here:
 
 No realtime/transport/streams, no domain payload types, no app-specific
 membership semantics. Those live in the app.
+
+## Public API
+
+Exported from `lib/groups.dart`:
+
+- Models: `Group`, `GroupMember`, `GroupRole` (`toManifestJson`, `toJson`,
+  `fromJson`, `copyWith`, `extra` passthrough, role helpers).
+- `GroupService` (static, pure): `createGroup`, `addMember`,
+  `isMemberSelfConsistent`, `removeMember` (always rotates), `setRole`,
+  `transferOwnership`, `transferOwnershipWithCharter`, `bumpedForPublish`,
+  `encryptManifestFor`, `decryptManifest` (with `CharterPolicy`,
+  `expectedGroupId`, `minCharterHeight`, `minPublishCounter`),
+  `sealKeyForMember`, `unsealKey`, `encryptWithGroupKey`,
+  `decryptWithGroupKey`.
+- Charter: `validateCharter`, `CharterValidationResult`, `charterEntryGroupId`,
+  `charterEnforcedOwnerKey`, `charterEnforcedOwner`, `kMaxCharterEntries`.
+
+## Requirements
+
+`spec/requirements.tsv` lists one row per requirement: `id`, `status`
+(`C` covered by a test, `U` uncovered), `source` (section of this file), a
+one-sentence statement, and the test file that proves it. Every change to the
+code must update this file and the table.
