@@ -309,4 +309,20 @@ void main() {
     expect(g.canAccessHidden('mem'), isFalse);
     expect(g.fullAccessMembers.map((m) => m.uid), ['owner', 'co']);
   });
+
+  test('Group.tryFromJson returns null on malformed input, group on valid', () {
+    final g = Group(
+      groupId: 'g1',
+      name: 'Fam',
+      ownerUid: 'u1',
+      members: const [GroupMember(uid: 'u1', publicKeyB64: 'cHVi')],
+      groupKey: Uint8List(32),
+      createdAt: 1,
+    );
+    expect(Group.tryFromJson(g.toJson())?.groupId, 'g1');
+    expect(Group.tryFromJson(const {}), isNull);
+    expect(Group.tryFromJson({...g.toJson(), 'groupKey': '!!not base64'}),
+        isNull);
+    expect(Group.tryFromJson({...g.toJson(), 'members': 'x'}), isNull);
+  });
 }

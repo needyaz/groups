@@ -221,7 +221,7 @@ membership semantics. Those live in the app.
 Exported from `lib/groups.dart`:
 
 - Models: `Group`, `GroupMember`, `GroupRole` (`toManifestJson`, `toJson`,
-  `fromJson`, `copyWith`, `extra` passthrough, role helpers).
+  `fromJson`, `Group.tryFromJson` (null instead of throwing), `copyWith`, `extra` passthrough, role helpers).
 - `GroupService` (static, pure): `createGroup`, `addMember`,
   `isMemberSelfConsistent`, `removeMember` (always rotates), `setRole`,
   `transferOwnership`, `transferOwnershipWithCharter`, `bumpedForPublish`,
@@ -230,7 +230,10 @@ Exported from `lib/groups.dart`:
   `sealKeyForMember`, `unsealKey`, `encryptWithGroupKey`,
   `decryptWithGroupKey`.
 - Charter: `validateCharter`, `CharterValidationResult`, `charterEntryGroupId`,
-  `charterEnforcedOwnerKey`, `charterEnforcedOwner`, `kMaxCharterEntries`.
+  `charterEnforcedOwnerKey`, `charterEnforcedOwner`, `kMaxCharterEntries`,
+  `kCharterVersion`, `CharterOwner`, `charterGroupId`, `charterEntryHash`,
+  `charterEntryTimestamp`, `nextCharterTimestamp`, `buildCharterGenesis`,
+  `buildCharterLink`.
 
 ## Requirements
 
@@ -240,4 +243,4 @@ one-sentence statement, and for covered rows the test file (`test`) and the
 exact test name (`test_name`) that proves it. Every change to the code must
 update this file and the table.
 
-**Spec status:** 67 C, 0 U.
+**Spec status:** 76 C, 0 U.

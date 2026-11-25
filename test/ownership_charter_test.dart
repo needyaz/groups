@@ -27,7 +27,9 @@ void main() {
   List<Object?> vectorChain() => jsonDecode(_vectorJson) as List<Object?>;
 
   /// Deep-copies the vector chain so a test can mutate one field in isolation.
-  List<Object?> mutatedVector(void Function(Map<String, Object?> payload) edit) {
+  List<Object?> mutatedVector(
+    void Function(Map<String, Object?> payload) edit,
+  ) {
     final chain = jsonDecode(_vectorJson) as List<Object?>;
     final entry = (chain.first! as Map).cast<String, Object?>();
     edit((entry['payload']! as Map).cast<String, Object?>());
@@ -38,21 +40,23 @@ void main() {
     final id = generateIdentity(sodium);
     return (
       id: id,
-      signing: deriveSigningKeyPair(sodium, id.seed, domain: signingDomain)
+      signing: deriveSigningKeyPair(sodium, id.seed, domain: signingDomain),
     );
   }
 
-  Map<String, Object?> genesisFor(({Identity id, KeyPair signing}) o,
-          {int createdAt = 1717000000000, String nonce = 'AAAAAAAAAAAAAAAA'}) =>
-      buildCharterGenesis(
-        sodium,
-        ownerSignSecretKey: o.signing.secretKey,
-        ownerUid: o.id.uid,
-        ownerEdPubKeyB64: base64.encode(o.signing.publicKey),
-        ownerBoxPubKeyB64: base64.encode(o.id.keyPair.publicKey),
-        createdAt: createdAt,
-        nonce: nonce,
-      );
+  Map<String, Object?> genesisFor(
+    ({Identity id, KeyPair signing}) o, {
+    int createdAt = 1717000000000,
+    String nonce = 'AAAAAAAAAAAAAAAA',
+  }) => buildCharterGenesis(
+    sodium,
+    ownerSignSecretKey: o.signing.secretKey,
+    ownerUid: o.id.uid,
+    ownerEdPubKeyB64: base64.encode(o.signing.publicKey),
+    ownerBoxPubKeyB64: base64.encode(o.id.keyPair.publicKey),
+    createdAt: createdAt,
+    nonce: nonce,
+  );
 
   group('golden vector (cross-language parity anchor)', () {
     test('validates to the expected owner and height', () {
@@ -76,37 +80,51 @@ void main() {
     });
 
     test('over-long chain is refused before doing the work', () {
-      final chain = List<Object?>.filled(kMaxCharterEntries + 1, <String, Object?>{});
+      final chain = List<Object?>.filled(
+        kMaxCharterEntries + 1,
+        <String, Object?>{},
+      );
       expect(validateCharter(sodium, chain, 'gid').reason, 'chain_too_long');
     });
 
     test('non-map entry', () {
-      expect(validateCharter(sodium, ['nope'], 'gid').reason, 'entry_0_not_map');
+      expect(
+        validateCharter(sodium, ['nope'], 'gid').reason,
+        'entry_0_not_map',
+      );
     });
 
     test('entry missing payload/sig, or carrying extra keys', () {
-      expect(validateCharter(sodium, [<String, Object?>{}], 'gid').reason,
-          'entry_0_malformed');
+      expect(
+        validateCharter(sodium, [<String, Object?>{}], 'gid').reason,
+        'entry_0_malformed',
+      );
       final chain = vectorChain();
       (chain.first! as Map)['extra'] = 1;
-      expect(validateCharter(sodium, chain, _vectorGroupId).reason,
-          'entry_0_malformed');
+      expect(
+        validateCharter(sodium, chain, _vectorGroupId).reason,
+        'entry_0_malformed',
+      );
     });
 
     test('a link in first position is not a genesis', () {
       final o = newOwner();
       final g = genesisFor(o);
       final gid = charterEntryGroupId(g)!;
-      final link = buildCharterLink(sodium,
-          prevEntry: g,
-          currentOwnerSignSecretKey: o.signing.secretKey,
-          groupId: gid,
-          newOwnerUid: 'b' * 32,
-          newOwnerEdPubKeyB64: base64.encode(o.signing.publicKey),
-          newOwnerBoxPubKeyB64: base64.encode(o.id.keyPair.publicKey),
-          ts: 1717000000001);
-      expect(validateCharter(sodium, [link], gid).reason,
-          'first_entry_not_genesis');
+      final link = buildCharterLink(
+        sodium,
+        prevEntry: g,
+        currentOwnerSignSecretKey: o.signing.secretKey,
+        groupId: gid,
+        newOwnerUid: 'b' * 32,
+        newOwnerEdPubKeyB64: base64.encode(o.signing.publicKey),
+        newOwnerBoxPubKeyB64: base64.encode(o.id.keyPair.publicKey),
+        ts: 1717000000001,
+      );
+      expect(
+        validateCharter(sodium, [link], gid).reason,
+        'first_entry_not_genesis',
+      );
       o.signing.secretKey.dispose();
     });
 
@@ -125,70 +143,97 @@ void main() {
       // JS as "1", so a chain could verify in one language and not the other.
       expect(1.0 == 1, isTrue);
       final chain = mutatedVector((p) => p['v'] = 1.0);
-      expect(validateCharter(sodium, chain, _vectorGroupId).reason,
-          'entry_0_bad_version');
+      expect(
+        validateCharter(sodium, chain, _vectorGroupId).reason,
+        'entry_0_bad_version',
+      );
     });
 
     test('a float timestamp is rejected', () {
       final chain = mutatedVector((p) => p['createdAt'] = 1717000000000.0);
-      expect(validateCharter(sodium, chain, _vectorGroupId).reason,
-          'entry_0_bad_timestamp');
+      expect(
+        validateCharter(sodium, chain, _vectorGroupId).reason,
+        'entry_0_bad_timestamp',
+      );
     });
 
     test('a timestamp beyond JS safe-integer range is rejected', () {
       final chain = mutatedVector((p) => p['createdAt'] = 9007199254740993);
-      expect(validateCharter(sodium, chain, _vectorGroupId).reason,
-          'entry_0_bad_timestamp');
+      expect(
+        validateCharter(sodium, chain, _vectorGroupId).reason,
+        'entry_0_bad_timestamp',
+      );
       final negative = mutatedVector((p) => p['createdAt'] = -1);
-      expect(validateCharter(sodium, negative, _vectorGroupId).reason,
-          'entry_0_bad_timestamp');
+      expect(
+        validateCharter(sodium, negative, _vectorGroupId).reason,
+        'entry_0_bad_timestamp',
+      );
     });
 
     test('a wrong version number is rejected', () {
       final chain = mutatedVector((p) => p['v'] = 2);
-      expect(validateCharter(sodium, chain, _vectorGroupId).reason,
-          'entry_0_bad_version');
+      expect(
+        validateCharter(sodium, chain, _vectorGroupId).reason,
+        'entry_0_bad_version',
+      );
     });
 
     test('a missing or extra payload field is rejected', () {
       final missing = mutatedVector((p) => p.remove('nonce'));
-      expect(validateCharter(sodium, missing, _vectorGroupId).reason,
-          'entry_0_bad_schema');
+      expect(
+        validateCharter(sodium, missing, _vectorGroupId).reason,
+        'entry_0_bad_schema',
+      );
       final extra = mutatedVector((p) => p['surprise'] = 'x');
-      expect(validateCharter(sodium, extra, _vectorGroupId).reason,
-          'entry_0_bad_schema');
+      expect(
+        validateCharter(sodium, extra, _vectorGroupId).reason,
+        'entry_0_bad_schema',
+      );
     });
 
     test('a non-string or non-ASCII field is rejected', () {
       final nonString = mutatedVector((p) => p['nonce'] = 42);
-      expect(validateCharter(sodium, nonString, _vectorGroupId).reason,
-          'entry_0_bad_field_nonce');
+      expect(
+        validateCharter(sodium, nonString, _vectorGroupId).reason,
+        'entry_0_bad_field_nonce',
+      );
       final unicode = mutatedVector((p) => p['nonce'] = 'Zoë');
-      expect(validateCharter(sodium, unicode, _vectorGroupId).reason,
-          'entry_0_bad_field_nonce');
+      expect(
+        validateCharter(sodium, unicode, _vectorGroupId).reason,
+        'entry_0_bad_field_nonce',
+      );
       final nulled = mutatedVector((p) => p['nonce'] = null);
-      expect(validateCharter(sodium, nulled, _vectorGroupId).reason,
-          'entry_0_bad_field_nonce');
+      expect(
+        validateCharter(sodium, nulled, _vectorGroupId).reason,
+        'entry_0_bad_field_nonce',
+      );
     });
 
     test('undecodable base64 in a key field is rejected', () {
       final chain = mutatedVector((p) => p['ownerEdPubKey'] = '!!!!');
-      expect(validateCharter(sodium, chain, _vectorGroupId).reason,
-          'entry_0_bad_base64');
+      expect(
+        validateCharter(sodium, chain, _vectorGroupId).reason,
+        'entry_0_bad_base64',
+      );
     });
   });
 
   group('binding and signature rejection', () {
     test('a chain for another group is rejected (graft)', () {
-      expect(validateCharter(sodium, vectorChain(), 'b' * 64).reason,
-          'entry_0_groupid_mismatch');
+      expect(
+        validateCharter(sodium, vectorChain(), 'b' * 64).reason,
+        'entry_0_groupid_mismatch',
+      );
     });
 
     test('a uid not derived from its own box key is rejected', () {
-      final chain =
-          mutatedVector((p) => p['ownerUid'] = 'deadbeefdeadbeefdeadbeefdeadbeef');
-      expect(validateCharter(sodium, chain, _vectorGroupId).reason,
-          'entry_0_uid_not_bound_to_box_key');
+      final chain = mutatedVector(
+        (p) => p['ownerUid'] = 'deadbeefdeadbeefdeadbeefdeadbeef',
+      );
+      expect(
+        validateCharter(sodium, chain, _vectorGroupId).reason,
+        'entry_0_uid_not_bound_to_box_key',
+      );
     });
 
     test('a forged genesis signature is rejected', () {
@@ -202,11 +247,18 @@ void main() {
       final payload = (g['payload']! as Map).cast<String, Object?>();
       final forged = <String, Object?>{
         'payload': payload,
-        'sig': base64.encode(signDetached(
-            sodium, canonicalJsonBytes(payload), imposter.signing.secretKey)),
+        'sig': base64.encode(
+          signDetached(
+            sodium,
+            canonicalJsonBytes(payload),
+            imposter.signing.secretKey,
+          ),
+        ),
       };
-      expect(validateCharter(sodium, [forged], gid).reason,
-          'genesis_signature_invalid');
+      expect(
+        validateCharter(sodium, [forged], gid).reason,
+        'genesis_signature_invalid',
+      );
       o.signing.secretKey.dispose();
       imposter.signing.secretKey.dispose();
     });
@@ -216,8 +268,10 @@ void main() {
       final g = genesisFor(o);
       final payload = (g['payload']! as Map).cast<String, Object?>();
       payload['groupId'] = 'c' * 64; // claim someone else's id
-      expect(validateCharter(sodium, [g], 'c' * 64).reason,
-          'genesis_hash_binding_mismatch');
+      expect(
+        validateCharter(sodium, [g], 'c' * 64).reason,
+        'genesis_hash_binding_mismatch',
+      );
       o.signing.secretKey.dispose();
     });
 
@@ -240,23 +294,31 @@ void main() {
       };
       final forged = <String, Object?>{
         'payload': payload,
-        'sig': base64.encode(signDetached(
-            sodium, canonicalJsonBytes(payload), o.signing.secretKey)),
+        'sig': base64.encode(
+          signDetached(
+            sodium,
+            canonicalJsonBytes(payload),
+            o.signing.secretKey,
+          ),
+        ),
       };
       final r = validateCharter(sodium, [forged], victimGroupId);
       expect(r.valid, isFalse);
       expect(r.reason, 'genesis_not_hash_bound');
       // And enforcement refuses to hand back the forger's key.
       expect(
-          charterEnforcedOwnerKey(sodium, [forged], o.id.uid, victimGroupId),
-          isNull);
+        charterEnforcedOwnerKey(sodium, [forged], o.id.uid, victimGroupId),
+        isNull,
+      );
       o.signing.secretKey.dispose();
     });
 
     test('an unknown id binding is rejected', () {
       final chain = mutatedVector((p) => p['idBinding'] = 'something');
-      expect(validateCharter(sodium, chain, _vectorGroupId).reason,
-          'genesis_not_hash_bound');
+      expect(
+        validateCharter(sodium, chain, _vectorGroupId).reason,
+        'genesis_not_hash_bound',
+      );
     });
   });
 
@@ -283,15 +345,16 @@ void main() {
       required SecureKey signedBy,
       Map<String, Object?>? prev,
       int ts = 1717000000001,
-    }) =>
-        buildCharterLink(sodium,
-            prevEntry: prev ?? genesis,
-            currentOwnerSignSecretKey: signedBy,
-            groupId: gid,
-            newOwnerUid: to.id.uid,
-            newOwnerEdPubKeyB64: base64.encode(to.signing.publicKey),
-            newOwnerBoxPubKeyB64: base64.encode(to.id.keyPair.publicKey),
-            ts: ts);
+    }) => buildCharterLink(
+      sodium,
+      prevEntry: prev ?? genesis,
+      currentOwnerSignSecretKey: signedBy,
+      groupId: gid,
+      newOwnerUid: to.id.uid,
+      newOwnerEdPubKeyB64: base64.encode(to.signing.publicKey),
+      newOwnerBoxPubKeyB64: base64.encode(to.id.keyPair.publicKey),
+      ts: ts,
+    );
 
     test('a well-formed transfer validates', () {
       final link = linkTo(bob, signedBy: alice.signing.secretKey);
@@ -301,51 +364,68 @@ void main() {
       expect(r.height, 2);
     });
 
-    test('a link signed by someone other than the outgoing owner is rejected',
-        () {
-      // Bob tries to award himself the group without Alice's signature.
-      final forged = linkTo(bob, signedBy: bob.signing.secretKey);
-      expect(validateCharter(sodium, [genesis, forged], gid).reason,
-          'entry_1_signature_not_by_prior_owner');
-    });
+    test(
+      'a link signed by someone other than the outgoing owner is rejected',
+      () {
+        // Bob tries to award himself the group without Alice's signature.
+        final forged = linkTo(bob, signedBy: bob.signing.secretKey);
+        expect(
+          validateCharter(sodium, [genesis, forged], gid).reason,
+          'entry_1_signature_not_by_prior_owner',
+        );
+      },
+    );
 
     test('a spliced prevHash is rejected', () {
       final link = linkTo(bob, signedBy: alice.signing.secretKey);
       final payload = (link['payload']! as Map).cast<String, Object?>();
       payload['prevHash'] = 'd' * 64;
-      expect(validateCharter(sodium, [genesis, link], gid).reason,
-          'entry_1_prevhash_mismatch');
+      expect(
+        validateCharter(sodium, [genesis, link], gid).reason,
+        'entry_1_prevhash_mismatch',
+      );
     });
 
     test('a self-link is rejected (height cannot be inflated)', () {
       // Previously accepted: a past owner could pre-sign a long fork of
       // self-links and beat the legitimate chain on a longest-chain rule.
       final self = linkTo(alice, signedBy: alice.signing.secretKey);
-      expect(validateCharter(sodium, [genesis, self], gid).reason,
-          'entry_1_self_link');
+      expect(
+        validateCharter(sodium, [genesis, self], gid).reason,
+        'entry_1_self_link',
+      );
     });
 
     test('a non-increasing timestamp is rejected', () {
-      final stale =
-          linkTo(bob, signedBy: alice.signing.secretKey, ts: 1717000000000);
-      expect(validateCharter(sodium, [genesis, stale], gid).reason,
-          'entry_1_ts_not_increasing');
+      final stale = linkTo(
+        bob,
+        signedBy: alice.signing.secretKey,
+        ts: 1717000000000,
+      );
+      expect(
+        validateCharter(sodium, [genesis, stale], gid).reason,
+        'entry_1_ts_not_increasing',
+      );
     });
 
     test('a link grafted from another group is rejected', () {
       final other = newOwner();
       final otherGenesis = genesisFor(other, nonce: 'BBBBBBBBBBBBBBBB');
       final otherGid = charterEntryGroupId(otherGenesis)!;
-      final foreign = buildCharterLink(sodium,
-          prevEntry: otherGenesis,
-          currentOwnerSignSecretKey: other.signing.secretKey,
-          groupId: otherGid,
-          newOwnerUid: bob.id.uid,
-          newOwnerEdPubKeyB64: base64.encode(bob.signing.publicKey),
-          newOwnerBoxPubKeyB64: base64.encode(bob.id.keyPair.publicKey),
-          ts: 1717000000002);
-      expect(validateCharter(sodium, [genesis, foreign], gid).reason,
-          'entry_1_groupid_mismatch');
+      final foreign = buildCharterLink(
+        sodium,
+        prevEntry: otherGenesis,
+        currentOwnerSignSecretKey: other.signing.secretKey,
+        groupId: otherGid,
+        newOwnerUid: bob.id.uid,
+        newOwnerEdPubKeyB64: base64.encode(bob.signing.publicKey),
+        newOwnerBoxPubKeyB64: base64.encode(bob.id.keyPair.publicKey),
+        ts: 1717000000002,
+      );
+      expect(
+        validateCharter(sodium, [genesis, foreign], gid).reason,
+        'entry_1_groupid_mismatch',
+      );
       other.signing.secretKey.dispose();
     });
   });
@@ -366,12 +446,21 @@ void main() {
       final o = newOwner();
       final g = genesisFor(o);
       final gid = charterEntryGroupId(g)!;
-      expect(charterEnforcedOwnerKey(sodium, null, o.id.uid, gid), isNull,
-          reason: 'no charter');
-      expect(charterEnforcedOwnerKey(sodium, const [], o.id.uid, gid), isNull,
-          reason: 'invalid chain');
-      expect(charterEnforcedOwnerKey(sodium, [g], 'someone-else', gid), isNull,
-          reason: 'tip diverged from ownerUid');
+      expect(
+        charterEnforcedOwnerKey(sodium, null, o.id.uid, gid),
+        isNull,
+        reason: 'no charter',
+      );
+      expect(
+        charterEnforcedOwnerKey(sodium, const [], o.id.uid, gid),
+        isNull,
+        reason: 'invalid chain',
+      );
+      expect(
+        charterEnforcedOwnerKey(sodium, [g], 'someone-else', gid),
+        isNull,
+        reason: 'tip diverged from ownerUid',
+      );
       o.signing.secretKey.dispose();
     });
 
@@ -379,19 +468,76 @@ void main() {
       final o = newOwner();
       final g = genesisFor(o);
       final gid = charterEntryGroupId(g)!;
-      expect(charterEnforcedOwnerKey(sodium, [g], o.id.uid, gid, minHeight: 2),
-          isNull);
-      expect(charterEnforcedOwnerKey(sodium, [g], o.id.uid, gid, minHeight: 1),
-          isNotNull);
+      expect(
+        charterEnforcedOwnerKey(sodium, [g], o.id.uid, gid, minHeight: 2),
+        isNull,
+      );
+      expect(
+        charterEnforcedOwnerKey(sodium, [g], o.id.uid, gid, minHeight: 1),
+        isNotNull,
+      );
       o.signing.secretKey.dispose();
     });
   });
 
-  test('charterEntryGroupId returns null on malformed entries (never throws)',
-      () {
-    expect(charterEntryGroupId(const {}), isNull);
-    expect(charterEntryGroupId(const {'payload': 'nope'}), isNull);
-    expect(charterEntryGroupId(const {'payload': <String, Object?>{}}), isNull);
-    expect(charterEntryGroupId(const {'payload': {'groupId': 7}}), isNull);
+  test(
+    'charterEntryGroupId returns null on malformed entries (never throws)',
+    () {
+      expect(charterEntryGroupId(const {}), isNull);
+      expect(charterEntryGroupId(const {'payload': 'nope'}), isNull);
+      expect(
+        charterEntryGroupId(const {'payload': <String, Object?>{}}),
+        isNull,
+      );
+      expect(
+        charterEntryGroupId(const {
+          'payload': {'groupId': 7},
+        }),
+        isNull,
+      );
+    },
+  );
+
+  test('charter helpers: version, group id, entry hash, timestamps, owner', () {
+    expect(kCharterVersion, 1);
+
+    final o = newOwner();
+    final genesis = genesisFor(o);
+    final payload = (genesis['payload']! as Map).cast<String, Object?>();
+    expect(charterGroupId(payload), payload['groupId']);
+    expect(
+      charterGroupId({...payload, 'nonce': 'BBBBBBBBBBBBBBBB'}),
+      isNot(payload['groupId']),
+    );
+
+    final h = charterEntryHash(genesis);
+    expect(h, matches(RegExp(r'^[0-9a-f]{64}$')));
+    expect(charterEntryHash(genesis), h);
+    expect(charterEntryHash({...genesis, 'sig': 'AAAA'}), isNot(h));
+
+    expect(charterEntryTimestamp(genesis), 1717000000000);
+    expect(charterEntryTimestamp(const {}), isNull);
+    expect(charterEntryTimestamp(const {'payload': 'x'}), isNull);
+    expect(
+      charterEntryTimestamp(const {
+        'payload': {'ts': 1.5},
+      }),
+      isNull,
+    );
+
+    expect(nextCharterTimestamp(genesis, 1717000000000 + 5), 1717000000005);
+    expect(nextCharterTimestamp(genesis, 1717000000000), 1717000000001);
+    expect(nextCharterTimestamp(genesis, 1), 1717000000001);
+    expect(nextCharterTimestamp(const {}, 42), 42);
+
+    final result = validateCharter(sodium, [
+      genesis,
+    ], payload['groupId']! as String);
+    expect(result.valid, isTrue, reason: result.reason);
+    final CharterOwner? tip = result.owner;
+    expect(tip, isNotNull);
+    expect(tip!.uid, o.id.uid);
+    expect(tip.edPubKeyB64, base64.encode(o.signing.publicKey));
+    expect(tip.boxPubKeyB64, base64.encode(o.id.keyPair.publicKey));
   });
 }
