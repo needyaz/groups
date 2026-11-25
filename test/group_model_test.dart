@@ -154,8 +154,7 @@ void main() {
     expect(wire['x'], 1);
   });
 
-  test('GroupMember passthrough is LOCAL-ONLY: survives toJson, never rides '
-      'the manifest', () {
+  test('GroupMember extra is local-only and never rides the manifest', () {
     final local = const GroupMember(uid: 'u', publicKeyB64: 'x')
         .toJson()
       ..['livenessAlertMinutes'] = 45;
@@ -269,8 +268,7 @@ void main() {
     expect(jsonEncode(g.toManifestJson()), expected);
   });
 
-  test('publishCounter: omitted at 0 (golden compat), published when bumped, '
-      'round-trips', () {
+  test('publishCounter is omitted at 0, published when bumped, round-trips', () {
     final g = Group(
       groupId: 'g1',
       name: 'Fam',

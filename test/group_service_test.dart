@@ -139,8 +139,7 @@ void main() {
   });
 
   group('manifest boundary', () {
-    test('a STALE manifest (publish counter below the high-water mark) is '
-        'rejected — the roster/key rollback vector', () {
+    test('a stale manifest below the publish high-water mark is rejected', () {
       final owner = generateIdentity(sodium);
       final member = generateIdentity(sodium);
       final evicted = generateIdentity(sodium);
@@ -384,8 +383,7 @@ void main() {
       );
     });
 
-    test('tolerant policy: accepts a diverged charter that strict rejects, '
-        'treating it exactly as uncharted', () {
+    test('tolerant policy accepts a diverged charter that strict rejects', () {
       // The live scenario tolerant exists for: an uncharted ownership
       // transfer left ownerUid permanently diverged from the charter tip.
       // Under strict the group can never sync again; under tolerant it syncs
@@ -429,8 +427,7 @@ void main() {
       expect(tolerated!.ownerUid, newOwner.uid);
     });
 
-    test('tolerant policy relaxes ONLY charter authority — the groupId pin '
-        'and roster vetting stay strict', () {
+    test('tolerant policy relaxes only charter authority, not pin or roster', () {
       final owner = generateIdentity(sodium);
       final member = generateIdentity(sodium);
       final mallory = generateIdentity(sodium);
@@ -476,8 +473,7 @@ void main() {
       expect(decoded!.memberByUid('a' * 32), isNull);
     });
 
-    test('tolerant policy DOCUMENTED TRADEOFF: a usurped manifest is accepted '
-        'when the victim already trusts the usurper\'s key', () {
+    test('tolerant policy accepts a usurped manifest (documented tradeoff)', () {
       // This is the exact hole strict exists to close (see the strict-mode
       // usurpation test above). Under tolerant it is a deliberate, accepted
       // product tradeoff — trust reduces to the caller-supplied
@@ -512,8 +508,7 @@ void main() {
       expect(decoded!.ownerUid, mallory.uid);
     });
 
-    test('an adopter wire field (Group.extra) survives the manifest '
-        'round-trip', () {
+    test('Group.extra survives the manifest round-trip', () {
       final owner = generateIdentity(sodium);
       final member = generateIdentity(sodium);
       var g = GroupService.createGroup(
@@ -537,6 +532,63 @@ void main() {
         expectedGroupId: g.groupId,
       );
       expect(decoded!.extra, {'sharingMode': 'onRequest'});
+    });
+
+    test('rejects a wrong-length group key', () {
+      final owner = generateIdentity(sodium);
+      final member = generateIdentity(sodium);
+      var g = GroupService.createGroup(
+          sodium: sodium,
+          name: 'G',
+          identity: owner,
+          signingKeyDomain: signingDomain);
+      g = GroupService.addMember(g, memberFor(member));
+      final short = g.copyWith(groupKey: Uint8List(16));
+      final blob = GroupService.encryptManifestFor(
+        sodium: sodium,
+        group: short,
+        ownerIdentity: owner,
+        memberPublicKey: member.keyPair.publicKey,
+      );
+      expect(
+        GroupService.decryptManifest(
+          sodium: sodium,
+          blob: blob,
+          myIdentity: member,
+          ownerPublicKey: owner.keyPair.publicKey,
+          expectedGroupId: g.groupId,
+        ),
+        isNull,
+      );
+    });
+
+    test('rejects a manifest whose sender key is not the charter tip key', () {
+      final owner = generateIdentity(sodium);
+      final other = generateIdentity(sodium);
+      final member = generateIdentity(sodium);
+      var g = GroupService.createGroup(
+          sodium: sodium,
+          name: 'G',
+          identity: owner,
+          signingKeyDomain: signingDomain);
+      g = GroupService.addMember(g, memberFor(member));
+      // The genuine manifest, but delivered over a different sender's key.
+      final blob = GroupService.encryptManifestFor(
+        sodium: sodium,
+        group: g,
+        ownerIdentity: other,
+        memberPublicKey: member.keyPair.publicKey,
+      );
+      expect(
+        GroupService.decryptManifest(
+          sodium: sodium,
+          blob: blob,
+          myIdentity: member,
+          ownerPublicKey: other.keyPair.publicKey,
+          expectedGroupId: g.groupId,
+        ),
+        isNull,
+      );
     });
 
     test('returns null (never throws) on tampered, truncated, or garbage blobs',

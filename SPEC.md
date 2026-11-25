@@ -236,5 +236,8 @@ Exported from `lib/groups.dart`:
 
 `spec/requirements.tsv` lists one row per requirement: `id`, `status`
 (`C` covered by a test, `U` uncovered), `source` (section of this file), a
-one-sentence statement, and the test file that proves it. Every change to the
-code must update this file and the table.
+one-sentence statement, and for covered rows the test file (`test`) and the
+exact test name (`test_name`) that proves it. Every change to the code must
+update this file and the table.
+
+**Spec status:** 67 C, 0 U.

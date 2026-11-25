@@ -362,8 +362,7 @@ void main() {
       o.signing.secretKey.dispose();
     });
 
-    test('fails open (null) with no charter, an invalid chain, or a '
-        'diverged ownerUid', () {
+    test('local owner fails open without a valid matching charter', () {
       final o = newOwner();
       final g = genesisFor(o);
       final gid = charterEntryGroupId(g)!;
